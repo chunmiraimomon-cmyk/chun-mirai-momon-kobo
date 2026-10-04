@@ -1,0 +1,28 @@
+{
+  "description": "EVOLUTION TOURで起動する保存済み実ソース。commitは当時公開した版に対応するGitコミット。",
+  "snapshots": {
+    "v1": { "commit": "6e42607", "title": "Build Neon Circuit arcade racer" },
+    "v3": { "commit": "e289e94", "title": "Load Three.js only in browser" },
+    "v7": { "commit": "cadb79d", "title": "Build elevated long course and refine battle items" },
+    "v11": { "commit": "b2e1b85", "title": "Add illustrated animal drivers and tougher rivals" },
+    "v15": { "commit": "f78f2f1", "title": "Add PS4 controls and reveal animal drivers" },
+    "v23": { "commit": "b300e44", "title": "Add cups minimap and adventure courses" },
+    "v24": { "commit": "53b4285", "title": "Rebuild adventure cup environments" },
+    "v26": { "commit": "632b436", "title": "Improve cloud cues and pirate seascape" },
+    "v30": { "commit": "a509383", "title": "Expand pirate ship with technical course" },
+    "v76": { "commit": "09b5463", "title": "Separate kart heading from road tilt" },
+    "v81": { "commit": "f41b72f", "title": "Turn pirate course into escalating sea battle" },
+    "v94": { "commit": "28ba796", "title": "Set hero skill cooldowns to thirty seconds" }
+  },
+  "tourOrder": {
+    "origin": ["v1", "v3", "v7", "v11", "v15", "v76:city"],
+    "adventure": ["v23:river", "v24:river", "v23:pirate", "v30:pirate", "v81:pirate", "v23:cloud", "v26:cloud"],
+    "skills": ["v94:city", "v94:starlight-gojo"]
+  },
+  "sharedPatches": [
+    "各旧版を1周で終了して次の保存版へ渡すブリッジ",
+    "人間には不可能なキーボードイベントだけを除外する現行フィルタ",
+    "ESCまたはコントローラーのPause/Optionsからタイトルへ戻る共通メニュー",
+    "EVOLUTION TOUR専用の13項目バグ図鑑"
+  ]
+}

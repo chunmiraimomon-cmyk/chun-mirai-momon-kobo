@@ -1,0 +1,159 @@
+/* HUD layout only: no canvas resolution, camera or simulation changes. */
+.race-ui-active, .legacy-tour-race {
+  --race-top: max(8px, env(safe-area-inset-top, 0px));
+  --race-left: max(8px, env(safe-area-inset-left, 0px));
+  --race-right: max(8px, env(safe-area-inset-right, 0px));
+  --race-bottom: max(8px, env(safe-area-inset-bottom, 0px));
+  --race-header-height: 64px;
+}
+.race-pause-button {
+  position: absolute; z-index: 24;
+  top: var(--race-top); right: var(--race-right);
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  width: 80px; min-height: 48px; padding: 8px;
+  border: 1px solid rgba(165,246,244,.8); border-radius: 8px;
+  color: #f4ffff; background: rgba(5,25,37,.88);
+  font: 700 14px/1.2 Arial, sans-serif;
+  cursor: pointer; pointer-events: auto; touch-action: manipulation;
+}
+.race-pause-button > span { font-size: 22px; }
+.race-pause-button:focus-visible { outline: 3px solid #ffda65; outline-offset: 2px; }
+.race-ui-active .game-hud {
+  top: 0; min-height: calc(var(--race-top) + var(--race-header-height));
+  padding: var(--race-top) calc(var(--race-right) + 92px) 6px var(--race-left);
+  grid-template-columns: 80px 54px minmax(0,1fr) 96px 106px; gap: 8px;
+}
+.race-ui-active .game-hud > * { min-width: 0; }
+.race-ui-active .position { padding-left: 0; }
+.race-ui-active .item-slot { width: min(140px,100%); min-width: 0; min-height: 54px; padding: 4px; }
+.race-ui-active .item-slot-visual { min-height: 38px; gap: 6px; }
+.race-ui-active .timer b { white-space: nowrap; }
+
+/* Status and messages participate in normal flow, including simultaneous
+   quests, VOLT's larger gauge, GIANT's angle meter and success/combo notices. */
+.race-ui-active .race-status-stack {
+  position: absolute; z-index: 12;
+  top: calc(var(--race-top) + var(--race-header-height) + 8px);
+  left: max(var(--race-left), calc((100% - 520px) / 2));
+  right: max(var(--race-right), calc((100% - 520px) / 2));
+  display: grid; gap: 8px; pointer-events: none;
+}
+.race-info-stack, .race-action-stack { display: grid; min-width: 0; gap: 8px; align-content: start; justify-items: center; }
+.race-feedback-slot { width: 100%; min-width: 0; }
+.race-feedback-slot:empty { display: none; }
+.race-ui-active .race-action-stack .achievement-toast { position: relative; inset: auto; transform: none; min-width: 0; width: 100%; padding: 6px 8px; animation: race-message-enter .18s ease-out both; pointer-events: none; }
+.race-ui-active .race-action-stack .achievement-toast > span { min-width: 0; font-size: 10px; line-height: 1.3; }
+.race-ui-active .race-action-stack .achievement-toast > i { flex-shrink: 0; }
+.race-ui-active .race-status-stack :is(.skill-meter, .random-quest-hud, .skill-feedback, .random-quest-combo, .giant-angle-meter) {
+  position: relative; inset: auto; margin: 0; min-width: 0; max-width: 100%; width: 100%; transform: none;
+}
+.race-ui-active .skill-meter, .race-ui-active .skill-meter.volt-active {
+  grid-template-columns: minmax(0,1fr) 64px; gap: 6px 8px;
+  min-height: 48px; padding: 7px 9px;
+}
+.race-ui-active .skill-meter > span { grid-column: 1; grid-row: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.race-ui-active .skill-meter > b { grid-column: 2; grid-row: 1; white-space: nowrap; }
+.race-ui-active .skill-meter > span, .race-ui-active .skill-meter > b { font-size: 12px; line-height: 1.2; }
+.race-ui-active .skill-meter > div { grid-column: 1 / -1; grid-row: 2; height: 8px; }
+.race-ui-active .skill-meter.volt-active > div { height: 16px; }
+.race-ui-active .random-quest-hud { padding: 7px 9px; }
+.race-ui-active .random-quest-hud header, .race-ui-active .random-quest-hud-footer { flex-wrap: wrap; gap: 4px; }
+.race-ui-active .random-quest-hud header span, .race-ui-active .random-quest-hud header b, .race-ui-active .random-quest-hud-footer { font-size: 10px; line-height: 1.2; }
+.race-ui-active .random-quest-hud > strong { font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.race-ui-active .skill-feedback { padding: 8px; font-size: 20px; line-height: 1.3; letter-spacing: .02em; overflow-wrap: anywhere; animation: race-message-enter .18s ease-out both; }
+.race-ui-active .skill-feedback .skill-feedback-english { font-size: 12px; line-height: 1.3; letter-spacing: .02em; }
+.race-ui-active .skill-feedback:is(.critical,.comet-critical) { font-size: 26px; }
+.race-ui-active .random-quest-combo { animation: race-combo-pop 3s ease-out both; }
+.race-ui-active .random-quest-combo small { font-size: 10px; line-height: 1.3; }
+.race-ui-active .giant-angle-meter { width: min(330px,100%); height: 164px; }
+@keyframes race-message-enter { from { opacity: 0; translate: 0 -5px; } }
+@keyframes race-combo-pop { 0% { opacity: 0; } 8%,78% { opacity: 1; } 100% { opacity: 0; } }
+
+/* Bottom instruments get separate lanes; labels never sit over the dial. */
+.mini-map[hidden], .controller-chip[hidden] { display: none !important; }
+.race-ui-active .mini-map {
+  top: calc(var(--race-top) + var(--race-header-height) + 72px);
+  right: calc(var(--race-right) + 14px);
+  bottom: auto;
+  left: auto;
+  width: 138px;
+  padding: 6px;
+}
+.race-ui-active .mini-map-canvas { width: 100%; height: auto; aspect-ratio: 4 / 3; }
+.race-ui-active .speedometer { right: var(--race-right); bottom: calc(var(--race-bottom) + 28px); }
+.race-ui-active .drift-meter { bottom: calc(var(--race-bottom) + 34px); width: min(350px,calc(100% - 330px)); }
+.race-ui-active .controller-chip { top: auto; left: var(--race-left); bottom: calc(var(--race-bottom) + 155px); }
+.race-ui-active .jump-indicator { top: auto; right: var(--race-right); bottom: calc(var(--race-bottom) + 162px); }
+.race-ui-active .jump-indicator span { display: none; }
+.race-ui-active .mobile-gesture-layer .gesture-zone { bottom: var(--race-bottom); }
+.race-ui-active .mobile-gesture-layer > small { display: none; }
+.race-ui-active .comet-gate-pointer { max-width: calc(100% - 20px); }
+
+.pause-confirm-actions button > small, .legacy-tour-pause nav button > small { display: block; margin-top: 6px; color: inherit; font: 700 14px/1.4 Arial,sans-serif; letter-spacing: 0; }
+.pause-confirm-overlay, .legacy-tour-pause { overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; }
+.pause-confirm-card, .legacy-tour-pause > div { flex-shrink: 0; max-width: 100%; }
+.pause-confirm-card p, .legacy-tour-pause p { font-size: 14px; line-height: 1.6; }
+.pause-confirm-actions button, .legacy-tour-pause nav button { min-height: 64px; touch-action: manipulation; }
+
+@media (max-width: 900px) {
+  .race-ui-active .game-hud { grid-template-columns: 40px 32px minmax(0,1fr) 64px; gap: 4px; }
+  .race-ui-active .game-hud .camera-mode { display: none; }
+  .race-ui-active .position b { font-size: 34px; }
+  .race-ui-active .position span { display: none; }
+  .race-ui-active .lap span, .race-ui-active .timer span { font-size: 10px; letter-spacing: 0; }
+  .race-ui-active .lap b, .race-ui-active .timer b { font-size: 12px; }
+  .race-ui-active .item-slot > span { display: none; }
+  .race-ui-active .item-slot { width: min(110px,100%); padding: 3px; }
+  .race-ui-active .item-slot-visual { gap: 4px; }
+  .race-ui-active .item-slot .item-graphic { --item-scale: .8; width: 36px; height: 36px; flex-basis: 36px; }
+  .race-ui-active .item-level-badge { min-width: 22px; }
+  .race-ui-active .item-level-badge > b { font-size: 28px; }
+  .race-ui-active .item-level-badge small { font-size: 10px; }
+}
+@media (max-width: 600px) and (orientation: portrait) {
+  .race-ui-active .race-status-stack { left: var(--race-left); right: var(--race-right); }
+  .race-ui-active .mini-map { top: calc(var(--race-top) + var(--race-header-height) + 116px); right: calc(var(--race-right) + 10px); width: 108px; }
+  .race-ui-active .mini-map > span { display: none; }
+  .race-ui-active .speedometer { transform: scale(.72); transform-origin: right bottom; }
+  .race-ui-active .drift-meter { bottom: calc(var(--race-bottom) + 134px); width: min(290px,calc(100% - 28px)); }
+  .race-ui-active .controller-chip { display: none; }
+  .race-ui-active .jump-indicator { bottom: calc(var(--race-bottom) + 102px); font-size: 10px; padding: 4px; }
+}
+/* Short landscape screens use two columns, not a shrunken portrait pile. */
+@media (max-height: 540px) and (orientation: landscape) {
+  .race-ui-active { --race-header-height: 56px; }
+  .race-ui-active .race-status-stack { left: max(var(--race-left),calc((100% - 660px) / 2)); right: max(var(--race-right),calc((100% - 660px) / 2)); grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; }
+  .race-ui-active .controller-chip, .race-ui-active .jump-indicator { display: none; }
+  .race-ui-active .mini-map { top: 50%; right: calc(var(--race-right) + 10px); bottom: auto; width: 94px; transform: translateY(-50%); }
+  .race-ui-active .mini-map > span { display: none; }
+  .race-ui-active .speedometer { bottom: calc(var(--race-bottom) + 20px); transform: scale(.66); transform-origin: right bottom; }
+  .race-ui-active .drift-meter { bottom: calc(var(--race-bottom) + 24px); width: min(280px,calc(100% - 240px)); }
+}
+@media (max-height: 650px) and (max-width: 600px), (max-height: 540px) and (orientation: landscape) {
+  .race-info-stack, .race-action-stack, .race-ui-active .race-status-stack { gap: 5px; }
+  .race-ui-active .skill-meter, .race-ui-active .skill-meter.volt-active { padding: 5px 7px; min-height: 42px; gap: 4px; }
+  .race-ui-active .random-quest-hud { padding: 5px 7px; }
+  .race-ui-active .random-quest-hud header b { display: none; }
+  .race-ui-active .random-quest-hud > strong { margin: 3px 0; font-size: 12px; }
+  .race-ui-active .random-quest-hud-footer { margin-top: 3px; }
+  .race-ui-active .giant-angle-meter { width: min(270px,100%); height: 92px; }
+  .race-ui-active .giant-angle-face { transform: scale(.52); transform-origin: left bottom; }
+  .race-ui-active .giant-angle-meter::before { top: 5px; left: 8px; font-size: 9px; }
+  .race-ui-active .giant-angle-readout { top: 21px; right: 6px; width: calc(100% - 116px); padding-left: 5px; }
+  .race-ui-active .giant-angle-readout b { font-size: 28px; }
+  .race-ui-active .giant-angle-readout span { margin-top: 3px; font-size: 9px; }
+  .race-ui-active .giant-angle-zones { display: none; }
+  .race-ui-active .skill-feedback { padding: 5px; font-size: 16px; }
+  .race-ui-active .skill-feedback:is(.critical,.comet-critical) { font-size: 20px; }
+  .race-ui-active .random-quest-combo b { font-size: 24px; }
+  .race-ui-active .random-quest-combo.hot b { font-size: 28px; }
+  .race-ui-active .random-quest-combo.legend b { font-size: 32px; }
+}
+@media (max-height: 480px) {
+  .pause-confirm-overlay, .legacy-tour-pause { justify-content: flex-start; align-content: start; padding: max(8px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left)); }
+  .pause-confirm-card, .legacy-tour-pause > div { padding: 12px; }
+  .pause-confirm-card h2, .legacy-tour-pause h2 { font-size: 32px; line-height: 1; }
+  .pause-confirm-card p, .legacy-tour-pause p { margin: 10px 0; }
+  .pause-confirm-card .overlay-kicker { margin-bottom: 8px; }
+  .pause-confirm-card > small, .legacy-tour-pause > div > small { font-size: 10px; line-height: 1.4; }
+}

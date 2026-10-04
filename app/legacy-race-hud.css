@@ -1,0 +1,41 @@
+/* Injected after each archived stylesheet inside its shadow root. */
+.legacy-root .game-hud {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 6px; padding: max(8px,env(safe-area-inset-top)) calc(max(8px,env(safe-area-inset-right)) + 92px) 6px max(8px,env(safe-area-inset-left));
+  min-height: 64px;
+}
+.legacy-root .game-hud > * { min-width: 0; }
+.legacy-root .position { padding-left: 0; }
+.legacy-root .camera-mode { display: none; }
+.legacy-root .skill-meter {
+  top: calc(max(8px,env(safe-area-inset-top)) + 76px);
+  width: min(460px,calc(100% - 20px)); min-width: 0;
+  grid-template-columns: minmax(0,1fr) 64px 40px;
+}
+.legacy-root .skill-meter > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.legacy-root .mini-map { top: calc(max(8px,env(safe-area-inset-top)) + 132px); right: calc(max(8px,env(safe-area-inset-right)) + 10px); bottom: auto; left: auto; width: 110px; }
+.legacy-root .mini-map-canvas { width: 100%; height: auto; aspect-ratio: 4 / 3; }
+.legacy-root .speedometer { right: max(8px,env(safe-area-inset-right)); bottom: calc(max(8px,env(safe-area-inset-bottom)) + 38px); }
+.legacy-root .drift-meter { width: min(310px,calc(100% - 280px)); bottom: calc(max(8px,env(safe-area-inset-bottom)) + 40px); }
+@media (max-width: 700px) {
+  .legacy-root .game-hud { gap: 4px; }
+  .legacy-root .game-hud .position span { display: none; }
+  .legacy-root .game-hud .position b { font-size: 28px; }
+  .legacy-root .game-hud .lap b, .legacy-root .game-hud .timer b { font-size: 12px; }
+  .legacy-root .game-hud .speed { padding-right: 0; }
+  .legacy-root .game-hud .speed b { font-size: 24px; }
+  .legacy-root .game-hud .item-slot { min-width: 54px; max-width: 80px; padding: 4px; font-size: 10px; }
+  .legacy-root .game-hud .item-slot > span { display: none; }
+  .legacy-root .controller-chip, .legacy-root .jump-indicator { display: none; }
+}
+@media (max-width: 600px) and (orientation: portrait) {
+  .legacy-root .mini-map { top: calc(max(8px,env(safe-area-inset-top)) + 184px); }
+  .legacy-root .drift-meter { bottom: calc(max(8px,env(safe-area-inset-bottom)) + 138px); width: min(280px,calc(100% - 24px)); }
+  .legacy-root .speedometer { transform: scale(.7); transform-origin: right bottom; }
+}
+@media (max-height: 540px) and (orientation: landscape) {
+  .legacy-root .mini-map { top: 50%; right: calc(max(8px,env(safe-area-inset-right)) + 8px); width: 90px; transform: translateY(-50%); }
+  .legacy-root .mini-map > span { display: none; }
+  .legacy-root .speedometer { transform: scale(.65); transform-origin: right bottom; }
+  .legacy-root .controller-chip, .legacy-root .jump-indicator { display: none; }
+}
