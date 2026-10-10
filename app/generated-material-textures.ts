@@ -1,6 +1,6 @@
 import type * as Three from "three";
 
-// ImageGen albedo artwork, packed as five shared 1024px atlases. These are
+// ImageGen albedo artwork, packed as shared 1024px atlases. These are
 // color/roughness details only: no geometry, displacement or collision changes.
 export const GENERATED_ATLAS_URLS = {
   kart: "/textures/generated-v1/kart.webp",
@@ -8,11 +8,16 @@ export const GENERATED_ATLAS_URLS = {
   organic: "/textures/generated-v1/organic.webp",
   nautical: "/textures/generated-v1/nautical.webp",
   specialty: "/textures/generated-v1/specialty.webp",
+  architecture: "/textures/backdrop-v2/architecture.webp",
 } as const;
 type AtlasName = keyof typeof GENERATED_ATLAS_URLS;
-type Mapping = "local" | "world" | "uv";
+type Mapping = "local" | "scaled-local" | "world" | "uv";
 type Recipe = { atlas: AtlasName; tile: number; mean: number[]; strength: number; repeat: number[] };
 export const GENERATED_SURFACES = {
+  concrete: { atlas: "architecture", tile: 0, mean: [0.519501, 0.456497, 0.387611], strength: 0.72, repeat: [0.2, 0.2] },
+  brick: { atlas: "architecture", tile: 1, mean: [0.335725, 0.163148, 0.102333], strength: 0.84, repeat: [0.45, 0.45] },
+  limestone: { atlas: "architecture", tile: 2, mean: [0.538952, 0.479082, 0.411617], strength: 0.7, repeat: [0.2, 0.2] },
+  cladding: { atlas: "architecture", tile: 3, mean: [0.079966, 0.100523, 0.127247], strength: 0.76, repeat: [0.2, 0.2] },
   paint: { atlas: "kart", tile: 0, mean: [0.305, 0.3075, 0.3106], strength: 0.62, repeat: [0.75, 0.75] },
   rubber: { atlas: "kart", tile: 1, mean: [0.0366, 0.0372, 0.0384], strength: 0.9, repeat: [3, 1] },
   metal: { atlas: "kart", tile: 2, mean: [0.3379, 0.3361, 0.3461], strength: 0.45, repeat: [2, 2] },
@@ -102,6 +107,15 @@ export function createGeneratedTextureSet(THREE: typeof Three, renderer: Three.W
       shader.vertexShader = shader.vertexShader.replace("#include <begin_vertex>", `#include <begin_vertex>
         vGeneratedPosition = ${tag.mapping === "world" ? "(modelMatrix * vec4(position, 1.0)).xyz" : "position"};
         vGeneratedNormal = normal; vGeneratedUV = uv;
+        ${tag.mapping === "scaled-local" ? `
+          mat4 generatedTransform = modelMatrix;
+          #ifdef USE_INSTANCING
+            generatedTransform = generatedTransform * instanceMatrix;
+          #endif
+          vec3 generatedScale = max(vec3(length(generatedTransform[0].xyz), length(generatedTransform[1].xyz), length(generatedTransform[2].xyz)), vec3(0.0001));
+          vGeneratedPosition = position * generatedScale;
+          vGeneratedNormal = normalize(normal / generatedScale);
+        ` : ""}
       `);
       shader.fragmentShader = `uniform sampler2D generatedAtlas;
         uniform float generatedReady; uniform float generatedStrength;

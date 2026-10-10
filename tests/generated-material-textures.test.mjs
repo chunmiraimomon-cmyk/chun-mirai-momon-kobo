@@ -73,14 +73,19 @@ test('applying textures preserves positions, indices, normals, object transforms
   f.registry.dispose();
 });
 
-test('animated UV skins stay local; road coordinates share world XZ across segments', () => {
+test('UV skins stay local, roads share world XZ and architectural instances use scale-correct texture density', () => {
   const f=fixture();
   const skin=markGeneratedSurface(new THREE.MeshStandardMaterial(),'skin','uv');
   const road=markGeneratedSurface(new THREE.MeshStandardMaterial(),'asphalt','world');
-  f.scene.add(new THREE.Mesh(new THREE.SphereGeometry(),skin),new THREE.Mesh(new THREE.PlaneGeometry(),road));f.registry.attach(f.scene);
+  const facade=markGeneratedSurface(new THREE.MeshStandardMaterial(),'concrete','scaled-local');
+  f.scene.add(new THREE.Mesh(new THREE.SphereGeometry(),skin),new THREE.Mesh(new THREE.PlaneGeometry(),road),new THREE.InstancedMesh(new THREE.BoxGeometry(),facade,2));f.registry.attach(f.scene);
   assert.match(shader(skin).fragmentShader,/generatedCoords = vGeneratedUV/);
   assert.match(shader(road).vertexShader,/vGeneratedPosition = \(modelMatrix \* vec4\(position, 1\.0\)\)\.xyz/);
   assert.match(shader(road).fragmentShader,/generatedCoords = vGeneratedPosition\.xz/);
+  assert.match(shader(facade).vertexShader,/generatedTransform = generatedTransform \* instanceMatrix/);
+  assert.match(shader(facade).vertexShader,/vGeneratedPosition = position \* generatedScale/);
+  assert.match(shader(facade).vertexShader,/vGeneratedNormal = normalize\(normal \/ generatedScale\)/);
+  assert.equal(GENERATED_SURFACES.concrete.atlas,'architecture');
   f.registry.dispose();
 });
 
@@ -118,12 +123,23 @@ test('texture failure leaves base colors enabled and readiness resolves; late lo
 test('all requested hazard materials, cars, roads and scenery are explicitly tagged', () => {
   for (const marker of [
     'markGeneratedSurface(tireMat, "rubber"', 'markGeneratedSurface(road.material,',
-    'markGeneratedSurface(starlightRoadMaterial,', 'markGeneratedSurface(trunkMat,',
+    'markGeneratedSurface(starlightRoadMaterial,',
     'color: 0x81502f, roughness: 0.86 }), "fur", "uv"', 'markGeneratedSurface(bark,', 'markGeneratedSurface(rollingBarrelWood,',
     'markGeneratedSurface(octopusSkin,', 'markGeneratedSurface(stalkMat,', 'markGeneratedSurface(leafMat,',
     '[hullWood, outerWood, innerWood, darkCeiling]', 'markGeneratedSurface(sailCanvas,',
-    'markGeneratedSurface(shellMaterial,', 'markGeneratedSurface(roadMaterial,',
+    'markGeneratedSurface(roadMaterial,',
   ]) assert.ok(page.includes(marker),marker);
+  const architecture=readFileSync(new URL('../app/backdrop-architecture.ts',import.meta.url),'utf8');
+  for(const kind of ['concrete','brick','limestone','cladding']) {
+    assert.ok(architecture.includes(`"${kind}", "scaled-local"`),`${kind} uses dedicated scale-correct facade artwork`);
+    assert.equal(GENERATED_SURFACES[kind].atlas,'architecture');
+  }
+  const nature=readFileSync(new URL('../app/backdrop-nature.ts',import.meta.url),'utf8');
+  assert.match(nature,/markGeneratedSurface\(material, surface/);
+  // The hero moon now has its own crater/terminator material; a stone-atlas
+  // marker would wrongly reintroduce the old terrestrial-rock moon surface.
+  assert.ok(page.includes('createHeroMoonMaterial(THREE)'));
+  assert.ok(page.includes('createHeroMoonGeometry(THREE)'));
   assert.match(page,/CylinderGeometry\(0\.55, 0\.68, 5\.4, 18\), \[bark, cut, cut\]/);
   assert.ok(page.indexOf('generatedTextures.attach(scene)',page.indexOf('const animate = (frameNow: number)')) > page.indexOf('reportRaceFault(frameStage, error, frameNow)'));
   assert.match(page,/if \(!readyReported && generatedTexturesReady\)/);

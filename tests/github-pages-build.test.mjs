@@ -40,7 +40,12 @@ test("the GitHub Pages entry loads module and stylesheet beneath the repository 
 test("all public data, textures and legacy driver asset URLs resolve under the repository", async () => {
   assert.doesNotMatch(bundledSource, /["'`]\/(?:textures|data|drivers)\//);
   const assetUrls = [...new Set([...bundledSource.matchAll(/\/chun-mirai-momon-kobo\/(?:textures|data|drivers)\/[^"'`\s]+/g)].map((match) => match[0]))];
-  assert.equal(assetUrls.filter((url) => url.includes("/textures/")).length, 5);
+  const textureModules = await Promise.all(["app/generated-material-textures.ts", "app/backdrop-nature.ts"]
+    .map((path) => readFile(join(root, path), "utf8")));
+  const declaredTextures = [...new Set([...textureModules.join("\n").matchAll(/["'](\/textures\/[^"'\s]+)["']/g)]
+    .map((match) => `${base}${match[1].slice(1)}`))];
+  assert.ok(declaredTextures.length >= 7, "existing terrain atlases plus dedicated architecture and alpha foliage artwork");
+  assert.deepEqual(assetUrls.filter((url) => url.includes("/textures/")).sort(), declaredTextures.sort());
   assert.equal(assetUrls.filter((url) => url.includes("/data/")).length, 12);
   assert.equal(assetUrls.filter((url) => url.includes("/drivers/")).length, 4);
   for (const url of assetUrls) {
@@ -66,5 +71,7 @@ test("the export remains a static client build with lazy archived stages and raw
   assert.match(css, /\.expanded-game-page/);
   assert.match(css, /\.fullscreen-game-layout/);
   assert.match(css, /\.game-hud/);
+  assert.match(css, /\.game-stage\.race-ui-active[^{}]*\{[^}]*overflow:\s*clip/,
+    "the compiled race stage must not retain internal menu focus scrolling");
   assert.doesNotMatch(css, /@import\s+["']tailwindcss/);
 });

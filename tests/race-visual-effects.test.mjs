@@ -83,6 +83,65 @@ test('sky tracks existing weather without changing fog, background, exposure or 
   assert.equal(background.getHexString(), '204060'); assert.equal(fog.far, 200);
 });
 
+test('one shared atmosphere owns themed layered clouds; presentation creates no competing sky', () => {
+  const presentation = readFileSync(new URL('../app/race-presentation.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(presentation, /const sky\s*=|scene\.add\(sky\)|sky\.material/);
+  const scene = new THREE.Scene();
+  createRaceVisualEffects(THREE, scene, true, 'cloud');
+  const skies = scene.children.filter(object => object.name === 'layered-atmosphere');
+  assert.equal(skies.length, 1);
+  const sky = skies[0];
+  assert.equal(sky.material.side, THREE.BackSide);
+  assert.equal(sky.material.depthWrite, false);
+  assert.match(sky.material.vertexShader, /gl_Position=clip\.xyww/);
+  assert.match(sky.material.fragmentShader, /vec4 distant=cloudLayer/);
+  assert.match(sky.material.fragmentShader, /vec4 nearby=cloudLayer/);
+  assert.match(sky.material.fragmentShader, /float volume=smoothstep/);
+  assert.match(sky.material.fragmentShader, /starSpecks\(celestial\)/);
+  assert.doesNotMatch(sky.material.fragmentShader, /for\s*\(|while\s*\(/); // No per-pixel ray march.
+  assert.equal(scene.children.some(object => object.isLight), false);
+});
+
+test('all six course atmospheres are distinct and fall back safely', () => {
+  const palette = new Set(), clouds = new Set();
+  for (const theme of ['city', 'jungle', 'river', 'pirate', 'starlight', 'cloud']) {
+    const scene = new THREE.Scene();
+    createRaceVisualEffects(THREE, scene, false, theme);
+    const uniforms = scene.getObjectByName('layered-atmosphere').material.uniforms;
+    palette.add(uniforms.uZenith.value.getHexString() + ':' + uniforms.uHorizon.value.getHexString());
+    clouds.add(uniforms.uCloudShape.value.toArray().join(','));
+  }
+  const scene = new THREE.Scene();
+  createRaceVisualEffects(THREE, scene, true, 'unknown');
+  assert.equal(scene.getObjectByName('layered-atmosphere').material.uniforms.uZenith.value.getHexString(), '3d83b6');
+  assert.equal(palette.size, 6); assert.equal(clouds.size, 6);
+});
+
+test('atmosphere updates reuse GPU resources and recover exactly after storm/night', () => {
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color('#6999be'); scene.fog = new THREE.Fog('#88acb5', 10, 400);
+  const fx = createRaceVisualEffects(THREE, scene, true, 'jungle');
+  const sky = scene.getObjectByName('layered-atmosphere'), camera = new THREE.PerspectiveCamera();
+  const geometry = sky.geometry, material = sky.material, uniforms = material.uniforms;
+  const skyColor = uniforms.uSky.value, fogColor = uniforms.uFog.value;
+  fx.updateSky(camera, 720, 0, 0);
+  const clear = [skyColor.toArray(), fogColor.toArray()];
+  const originalRandom = Math.random;
+  Math.random = () => { throw new Error('sky consumed gameplay RNG'); };
+  try {
+    for (let i = 0; i < 200; i++) {
+      fx.update(1/60, i/60);
+      fx.updateSky(camera, 720, 1, 1);
+    }
+  } finally { Math.random = originalRandom; }
+  fx.updateSky(camera, 720, 0, 0);
+  assert.equal(sky.geometry, geometry); assert.equal(sky.material, material); assert.equal(sky.material.uniforms, uniforms);
+  assert.equal(uniforms.uSky.value, skyColor); assert.equal(uniforms.uFog.value, fogColor);
+  assert.deepEqual([skyColor.toArray(), fogColor.toArray()], clear);
+  assert.equal(uniforms.uNight.value, 0); assert.equal(uniforms.uStorm.value, 0);
+  assert.equal(scene.children.length, 3);
+});
+
 test('all four skills have distinct owned geometry and retain provided material', () => {
   const counts = {};
   for (const skill of ['GIANT', 'PIXEL', 'VOLT', 'COMET']) {

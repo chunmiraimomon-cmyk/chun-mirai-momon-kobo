@@ -6,6 +6,12 @@ import { RacePauseButton } from "./race-pause-button";
 import { createGeneratedTextureSet, markGeneratedSurface } from "./generated-material-textures";
 import { addSkillAccent, createRaceVisualEffects, wetRoadForSpray } from "./race-visual-effects";
 import { createDriftVisualEffects, type TireSurfaceContact } from "./drift-visual-effects";
+import { createTurboExhaustVisual } from "./turbo-exhaust-visual";
+import { createCourseBackdrop, applyBackdropGroundDetail } from "./course-backdrop";
+import { createHeroMoonGeometry, createHeroMoonMaterial } from "./backdrop-sky-sea";
+import { createCloudRoadPatchGeometry, createCloudRoadMaterial } from "./cloud-road-visual";
+import { createOctopusForeshadowArms, pirateOctopusApproach, pirateOctopusPeekY } from "./pirate-horizon";
+import { createPirateBreachVisual, getPirateBreachPose, PIRATE_BREACH_TRIGGER_PROGRESS, PIRATE_BREACH_SETTLED_MS } from "./pirate-breach-visual";
 import type * as Three from "three";
 import {
   KEYBOARD_GLITCH_PAIR_MS,
@@ -1903,7 +1909,7 @@ function makeKartHoodGeometry(THREE: ThreeModule) {
   return geometry;
 }
 
-function createKart(THREE: ThreeModule, color: number, accent: number, player = false, animal: DriverAnimal = "otter") {
+export function createKart(THREE: ThreeModule, color: number, accent: number, player = false, animal: DriverAnimal = "otter") {
   const kart = new THREE.Group();
   const visualRoot = new THREE.Group();
   kart.add(visualRoot);
@@ -2258,7 +2264,10 @@ function addWorld(THREE: ThreeModule, scene: Three.Scene, course: RaceCourse, de
   const groundMaterial = pirate
     ? new THREE.MeshPhysicalMaterial({ color: 0x087fba, emissive: 0x043b62, emissiveIntensity: 0.16, roughness: 0.14, metalness: 0.08, clearcoat: 0.82, clearcoatRoughness: 0.16 })
     : new THREE.MeshStandardMaterial({ color: cloudScenery ? 0x85cbed : starlightScenery ? 0x08142e : jungle || river ? 0x315f2f : 0x78976a, roughness: 0.98 });
-  if (!pirate && !cloudScenery && !starlightScenery) markGeneratedSurface(groundMaterial, "grass", "local");
+  if (!pirate && !cloudScenery && !starlightScenery) {
+    applyBackdropGroundDetail(groundMaterial, jungle || river);
+    markGeneratedSurface(groundMaterial, "grass", "local");
+  }
   if (pirate) markGeneratedSurface(groundMaterial, "water");
   if (pirate) {
     groundMaterial.onBeforeCompile = (shader) => {
@@ -2273,13 +2282,19 @@ function addWorld(THREE: ThreeModule, scene: Three.Scene, course: RaceCourse, de
     scene.userData.oceanTime = oceanTime;
   }
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(pirate ? 1400 : 520, pirate ? 1400 : 520, pirate ? 28 : 12, pirate ? 28 : 12),
+    new THREE.PlaneGeometry(1800, 1800, pirate ? 28 : 12, pirate ? 28 : 12),
     groundMaterial,
   );
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = WORLD_GROUND_Y;
+  // Sky courses have empty air below them; this is not the physical road.
+  ground.visible = !starlightScenery && !cloudScenery;
   ground.receiveShadow = true;
   scene.add(ground);
+  // Scenery is deliberately separate from the road queries and landing geometry.
+  const courseBackdrop = createCourseBackdrop(THREE, scene, course, visualTheme, WORLD_GROUND_Y);
+  scene.userData.courseBackdrop = courseBackdrop.group;
+  if (starlightScenery) courseBackdrop.group.userData.setNightStrength?.(starlight ? 0 : 1);
 
   if (definition.id === "custom" && starlightScenery) {
     const starPositions = new Float32Array(720 * 3);
@@ -2305,23 +2320,8 @@ function addWorld(THREE: ThreeModule, scene: Three.Scene, course: RaceCourse, de
     scene.add(moonLight);
   }
 
-  if (definition.id === "custom" && cloudScenery) {
-    const cloudMaterial = new THREE.MeshStandardMaterial({ color: 0xf8fdff, emissive: 0xbfeaff, emissiveIntensity: 0.08, roughness: 1 });
-    markGeneratedSurface(cloudMaterial, "cloud", "uv", [1, 1]);
-    const cloudSea = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(4.8, 2), cloudMaterial, 90);
-    const cloudDummy = new THREE.Object3D();
-    for (let index = 0; index < 90; index += 1) {
-      const angle = (index * 2.399963229728653) % TAU;
-      const radius = 45 + (index * 61) % 280;
-      cloudDummy.position.set(Math.sin(angle) * radius, -0.2 + (index % 4) * 0.7, Math.cos(angle) * radius);
-      cloudDummy.scale.set(1 + index % 3 * 0.24, 0.58 + index % 2 * 0.12, 1.35 + index % 5 * 0.08);
-      cloudDummy.rotation.y = angle;
-      cloudDummy.updateMatrix();
-      cloudSea.setMatrixAt(index, cloudDummy.matrix);
-    }
-    cloudSea.instanceMatrix.needsUpdate = true;
-    scene.add(cloudSea);
-  }
+  // Custom cloud courses use the same sparse sculpted backdrop, without a
+  // second ninety-blob cloud layer superimposed on it.
 
   const concrete = new THREE.MeshStandardMaterial({ color: pirate ? 0x6f4325 : starlightScenery ? 0x7f8bad : jungle || river ? 0x9b825f : 0xc9c8bd, roughness: 0.88, metalness: 0.02 });
   markGeneratedSurface(concrete, pirate ? "wood" : "stone", "world");
@@ -2395,13 +2395,6 @@ function addWorld(THREE: ThreeModule, scene: Three.Scene, course: RaceCourse, de
     scene.add(prismRoad);
   } else if (cloud) {
     const cloudPatches: Three.Group[] = [];
-    cloudPuffMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xb7e7ff, emissiveIntensity: 0.08, roughness: 1 });
-    markGeneratedSurface(cloudPuffMaterial, "cloud", "uv", [1, 1]);
-    const puffGeometries = [
-      new THREE.IcosahedronGeometry(1.65, 2),
-      new THREE.IcosahedronGeometry(2.05, 2),
-      new THREE.IcosahedronGeometry(2.4, 2),
-    ];
     const warningBeamAuraGeometry = new THREE.CylinderGeometry(1.15, 2.8, 80, 10, 1, true);
     const warningBeamCoreGeometry = new THREE.CylinderGeometry(0.22, 0.68, 80, 8);
     const warningImpactGeometry = new THREE.TorusGeometry(3.15, 0.24, 8, 24);
@@ -2416,19 +2409,11 @@ function addWorld(THREE: ThreeModule, scene: Three.Scene, course: RaceCourse, de
         const origin = course.pointAt((startU + endU) * 0.5, centerLane);
         const patch = new THREE.Group();
         patch.position.set(origin.x, origin.y, origin.z);
-        const surfaceMaterial = new THREE.MeshStandardMaterial({
-          color: 0xf8fcff,
-          emissive: 0x9cddff,
-          emissiveIntensity: 0.1,
-          roughness: 0.95,
-          transparent: true,
-          opacity: 0.98,
-          side: THREE.DoubleSide,
-        });
+        const surfaceMaterial = createCloudRoadMaterial(THREE);
+        cloudPuffMaterial ??= surfaceMaterial;
         cloudSurfaceMaterials.push(surfaceMaterial);
-        markGeneratedSurface(surfaceMaterial, "cloud", "world");
         const surface = new THREE.Mesh(
-          makeCourseSegmentGeometry(THREE, course, startU, endU, leftLane, rightLane, 0.08, origin, 12),
+          createCloudRoadPatchGeometry(THREE, course, { startU, endU, side, halfWidth: COURSE_WIDTH, origin }),
           surfaceMaterial,
         );
         surface.receiveShadow = true;
@@ -2442,7 +2427,7 @@ function addWorld(THREE: ThreeModule, scene: Three.Scene, course: RaceCourse, de
           side: THREE.DoubleSide,
         });
         const warningSurface = new THREE.Mesh(
-          makeCourseSegmentGeometry(THREE, course, startU, endU, leftLane, rightLane, 0.2, origin, 12),
+          makeCourseSegmentGeometry(THREE, course, startU, endU, leftLane, rightLane, 1.9, origin, 12),
           warningMaterial,
         );
         warningSurface.visible = false;
@@ -2452,7 +2437,7 @@ function addWorld(THREE: ThreeModule, scene: Three.Scene, course: RaceCourse, de
           const stripeStart = startU + (endU - startU) * (stripeIndex / 6);
           const stripeEnd = startU + (endU - startU) * ((stripeIndex + 0.48) / 6);
           const stripe = new THREE.Mesh(
-            makeCourseSegmentGeometry(THREE, course, stripeStart, stripeEnd, leftLane, rightLane, 0.255, origin, 3),
+            makeCourseSegmentGeometry(THREE, course, stripeStart, stripeEnd, leftLane, rightLane, 1.96, origin, 3),
             new THREE.MeshBasicMaterial({
               color: stripeIndex % 2 === 0 ? 0xffe14b : 0xff391f,
               transparent: true,
@@ -2516,7 +2501,7 @@ function addWorld(THREE: ThreeModule, scene: Three.Scene, course: RaceCourse, de
               depthWrite: false,
             }),
           );
-          impact.position.y = 0.42 + ringIndex * 0.12;
+          impact.position.y = 1.55 + ringIndex * 0.12;
           impact.rotation.x = Math.PI / 2;
           impact.scale.setScalar(ringScale);
           beamImpacts.add(impact);
@@ -2524,16 +2509,6 @@ function addWorld(THREE: ThreeModule, scene: Three.Scene, course: RaceCourse, de
         beamImpacts.visible = false;
         warningBeam.add(beamImpacts);
         scene.add(warningBeam);
-        [0.12, 0.38, 0.66, 0.9].forEach((amount, puffIndex) => {
-          const u = startU + (endU - startU) * amount;
-          const lane = side * (1.3 + ((puffIndex * 2.35 + index * 0.87) % 7.8));
-          const point = course.pointAt(u, lane);
-          const puff = new THREE.Mesh(puffGeometries[(index + puffIndex) % puffGeometries.length], cloudPuffMaterial);
-          puff.position.set(point.x - origin.x, point.y - origin.y + 0.12 + (puffIndex % 2) * 0.08, point.z - origin.z);
-          puff.scale.set(1.25 + (puffIndex % 2) * 0.22, 0.42 + (puffIndex % 3) * 0.07, 1.05);
-          puff.receiveShadow = true;
-          patch.add(puff);
-        });
         patch.userData.index = index;
         patch.userData.side = side;
         patch.userData.surfaceMaterial = surfaceMaterial;
@@ -2984,6 +2959,7 @@ function addWorld(THREE: ThreeModule, scene: Three.Scene, course: RaceCourse, de
     mesh.count = curbCounters[curbMeshes.indexOf(mesh)];
     mesh.instanceMatrix.needsUpdate = true;
     mesh.castShadow = false;
+    mesh.visible = !cloud; // Cloud crowns define the edge; no painted road kerb.
     scene.add(mesh);
   });
 
@@ -2993,246 +2969,13 @@ function addWorld(THREE: ThreeModule, scene: Three.Scene, course: RaceCourse, de
       new THREE.BoxGeometry(1.06, 0.045, 1.06),
       new THREE.MeshStandardMaterial({ color: i % 2 ? 0xf5f5ef : 0x20252a, roughness: 0.68 }),
     );
-    tile.position.set(start.x, start.y + 0.11, start.z);
+    tile.position.set(start.x, start.y + (cloud ? 1.8 : 0.11), start.z);
     tile.rotation.y = start.heading;
     scene.add(tile);
   }
 
-  const buildingColors = [0xd8d3c8, 0xc5d2d5, 0xd9c9bd, 0xb9c7d2, 0xdedbd2];
-  const glassMats = [0x6f9eaf, 0x568198, 0x8ab1bd].map((color) => new THREE.MeshPhysicalMaterial({ color, roughness: 0.14, metalness: 0.48, clearcoat: 0.6 }));
-  const windowCapacity = definition.id === "city" ? 62 * 7 * 3 : 1;
-  const windowGeometry = new THREE.BoxGeometry(1, 1, 0.07);
-  const windowMeshes = glassMats.map((material) => new THREE.InstancedMesh(windowGeometry, material, windowCapacity));
-  const windowCounts = [0, 0, 0];
-  const windowDummy = new THREE.Object3D();
-  const windowPosition = new THREE.Vector3();
-  const worldUp = new THREE.Vector3(0, 1, 0);
-  const makeBuilding = (x: number, z: number, w: number, d: number, h: number, index: number, rotation: number) => {
-    const footprintRadius = Math.hypot(w, d) * 0.52;
-    if (!course.isClearFromRoad(x, z, COURSE_WIDTH + footprintRadius + 2.2)) return;
-    const group = new THREE.Group();
-    const shellMaterial = new THREE.MeshStandardMaterial({ color: buildingColors[index % buildingColors.length], roughness: 0.68, metalness: 0.04, flatShading: true });
-    shellMaterial.userData.buildingFacade = true;
-    markGeneratedSurface(shellMaterial, "stone", "local", [0.5, 0.5]);
-    const lowerHeight = h * (index % 3 === 0 ? 0.68 : 0.76);
-    const lowerShell = new THREE.Mesh(new THREE.BoxGeometry(w, lowerHeight, d), shellMaterial);
-    lowerShell.position.y = lowerHeight / 2;
-    lowerShell.castShadow = true;
-    lowerShell.receiveShadow = true;
-    group.add(lowerShell);
-    const crownWidth = w * (0.68 + (index % 2) * 0.1);
-    const crownDepth = d * (0.72 + ((index + 1) % 2) * 0.1);
-    const crownShell = new THREE.Mesh(new THREE.BoxGeometry(crownWidth, h - lowerHeight, crownDepth), shellMaterial);
-    crownShell.position.y = lowerHeight + (h - lowerHeight) / 2;
-    crownShell.castShadow = true;
-    crownShell.receiveShadow = true;
-    group.add(crownShell);
-    if (index % 4 === 0) {
-      const rooftopFin = new THREE.Mesh(
-        new THREE.ConeGeometry(Math.min(w, d) * 0.2, 1.3 + (index % 3) * 0.45, 4),
-        new THREE.MeshStandardMaterial({ color: 0x667278, roughness: 0.6, metalness: 0.28, flatShading: true }),
-      );
-      rooftopFin.position.y = h + rooftopFin.geometry.parameters.height / 2;
-      rooftopFin.rotation.y = Math.PI / 4;
-      group.add(rooftopFin);
-    }
-
-    const rows = Math.min(7, Math.max(3, Math.floor(h / 3)));
-    for (let row = 0; row < rows; row += 1) {
-      const y = 1.7 + row * ((h - 2.4) / rows);
-      const facadeDepth = y > lowerHeight ? crownDepth : d;
-      for (let column = -1; column <= 1; column += 1) {
-        const materialIndex = (index + row + column + 3) % glassMats.length;
-        windowPosition
-          .set(column * Math.min(w * 0.27, crownWidth * 0.35), y, -facadeDepth / 2 - 0.04)
-          .applyAxisAngle(worldUp, rotation);
-        windowDummy.position.set(x + windowPosition.x, windowPosition.y, z + windowPosition.z);
-        windowDummy.rotation.set(0, rotation, 0);
-        windowDummy.scale.set(w * 0.2, 0.72, 1);
-        windowDummy.updateMatrix();
-        windowMeshes[materialIndex].setMatrixAt(windowCounts[materialIndex], windowDummy.matrix);
-        windowCounts[materialIndex] += 1;
-      }
-    }
-
-    const roof = new THREE.Mesh(new THREE.BoxGeometry(crownWidth * 0.48, 0.55, crownDepth * 0.46), new THREE.MeshStandardMaterial({ color: 0x7d8586, roughness: 0.62, metalness: 0.32 }));
-    roof.position.y = h + 0.27;
-    roof.castShadow = false;
-    group.add(roof);
-    group.position.set(x, 0, z);
-    group.rotation.y = rotation;
-    scene.add(group);
-  };
-
-  if (definition.id === "city") {
-    for (let i = 0; i < 62; i += 1) {
-      const side = i % 2 === 0 ? 1 : -1;
-      const u = wrap01(i / 62 + 0.009 * Math.sin(i * 2.1));
-      const point = course.pointAt(u, side * (28 + (i % 3) * 7));
-      makeBuilding(
-        point.x,
-        point.z,
-        4.5 + (i % 3) * 1.25,
-        4.2 + ((i + 1) % 3) * 1.1,
-        10 + (i * 7 % 22),
-        i,
-        point.heading + (side > 0 ? Math.PI : 0),
-      );
-    }
-    windowMeshes.forEach((mesh, materialIndex) => {
-      mesh.count = windowCounts[materialIndex];
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.castShadow = false;
-      scene.add(mesh);
-    });
-  }
-
-  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x76523a, roughness: 0.95 });
-  const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.94 });
-  markGeneratedSurface(trunkMat, "bark", "uv");
-  markGeneratedSurface(leafMat, "leaf", "uv", [3, 2]);
-  const environmentTreeCount = jungle ? 128 : river ? 164 : starlightScenery || cloudScenery || pirate ? 0 : 76;
-  const treeCapacity = Math.max(1, environmentTreeCount);
-  // Unit trunks have their base at zero: every species grows from terrain, not road height.
-  const trunkGeometry = new THREE.CylinderGeometry(0.68, 1, 1, 12);
-  trunkGeometry.translate(0, 0.5, 0);
-  const trunkInstances = new THREE.InstancedMesh(trunkGeometry, trunkMat, treeCapacity * 8);
-  const leafGeometry = new THREE.IcosahedronGeometry(1, 2);
-  const leafInstances = new THREE.InstancedMesh(leafGeometry, leafMat, treeCapacity * 8);
-  const coneInstances = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 1, 12), leafMat, treeCapacity * 3);
-  trunkInstances.name = "grounded-tree-trunks";
-  leafInstances.name = "grounded-tree-crowns";
-  coneInstances.name = "grounded-tree-conifers";
-  const treeDummy = new THREE.Object3D();
-  const treeColor = new THREE.Color();
-  const treeUp = new THREE.Vector3(0, 1, 0);
-  const treeDirection = new THREE.Vector3();
-  let trunkCount = 0, leafCount = 0, coneCount = 0;
-  const makeTree = (x: number, roadHeight: number, z: number, size: number, index: number) => {
-    const species = jungle ? ["canopy", "palm", "bamboo", "round"][index % 4]
-      : river ? ["willow", "palm", "round"][index % 3]
-        : ["round", "poplar", "conifer"][index % 3];
-    const crownRadius = (species === "canopy" ? 3.9 : species === "palm" ? 4.1 : species === "willow" ? 2.8 : 1.9) * size;
-    if (!course.isClearFromRoad(x, z, COURSE_WIDTH + crownRadius + 1.2)) return;
-    const rootY = WORLD_GROUND_Y - 0.08;
-    const yaw = index * 2.399;
-    const branch = (ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, radius: number) => {
-      treeDirection.set(dx, dy, dz);
-      const length = treeDirection.length();
-      treeDummy.position.set(x + ox, rootY + oy, z + oz);
-      treeDummy.quaternion.setFromUnitVectors(treeUp, treeDirection.normalize());
-      treeDummy.scale.set(radius, length, radius);
-      treeDummy.updateMatrix();
-      trunkInstances.setMatrixAt(trunkCount++, treeDummy.matrix);
-    };
-    const crown = (ox: number, oy: number, oz: number, sx: number, sy: number, sz: number, angle = yaw, cone = false) => {
-      treeDummy.position.set(x + ox * size, rootY + oy * size, z + oz * size);
-      treeDummy.rotation.set(0, angle, 0);
-      treeDummy.scale.set(sx * size, sy * size, sz * size);
-      treeDummy.updateMatrix();
-      const mesh = cone ? coneInstances : leafInstances;
-      const slot = cone ? coneCount++ : leafCount++;
-      mesh.setMatrixAt(slot, treeDummy.matrix);
-      treeColor.setHex([0x327746, 0x458747, 0x548e44, 0x286a43][(index + slot) % 4]);
-      mesh.setColorAt(slot, treeColor);
-    };
-    if (species === "palm") {
-      // Connected, gently curved trunk with six long radial fronds.
-      for (let section = 0; section < 5; section += 1) {
-        const bend = section * section * 0.045 * size;
-        const nextBend = (section + 1) ** 2 * 0.045 * size;
-        branch(Math.cos(yaw) * bend, section * 1.05 * size, Math.sin(yaw) * bend,
-          Math.cos(yaw) * (nextBend - bend), 1.05 * size, Math.sin(yaw) * (nextBend - bend), (0.23 - section * 0.019) * size);
-      }
-      const topX = Math.cos(yaw) * 1.125, topZ = Math.sin(yaw) * 1.125;
-      crown(topX, 5.25, topZ, 0.65, 0.42, 0.65);
-      for (let frond = 0; frond < 6; frond += 1) {
-        const angle = yaw + frond * TAU / 6;
-        crown(topX + Math.cos(angle) * 1.25, 5.12, topZ + Math.sin(angle) * 1.25, 1.7, 0.2, 0.44, -angle);
-      }
-    } else if (species === "bamboo") {
-      for (let stem = 0; stem < 4; stem += 1) {
-        const angle = yaw + stem * TAU / 4;
-        const ox = Math.cos(angle) * 0.45, oz = Math.sin(angle) * 0.45;
-        const height = 4.6 + stem * 0.55;
-        branch(ox * size, 0, oz * size, Math.cos(angle) * 0.25 * size, height * size, Math.sin(angle) * 0.25 * size, 0.09 * size);
-        crown(ox * 1.55, height - 0.5, oz * 1.55, 0.64, 1.25, 0.64);
-      }
-    } else if (species === "conifer") {
-      branch(0, 0, 0, 0, 4.6 * size, 0, 0.22 * size);
-      crown(0, 2.55, 0, 1.85, 2.8, 1.85, yaw, true);
-      crown(0, 3.7, 0, 1.4, 2.5, 1.4, yaw, true);
-      crown(0, 4.75, 0, 0.95, 2.25, 0.95, yaw, true);
-    } else if (species === "poplar") {
-      branch(0, 0, 0, 0, 4.2 * size, 0, 0.19 * size);
-      crown(0, 3.9, 0, 0.95, 2.55, 0.95);
-      crown(0.12, 5.05, 0.05, 0.62, 1.45, 0.62);
-    } else {
-      const height = species === "canopy" ? Math.max(10, Math.min(34, roadHeight * 0.78 + 7.5))
-        : species === "willow" ? 4.3 : 3.2;
-      branch(0, 0, 0, 0, height * size, 0, (species === "canopy" ? 0.48 : 0.25) * size);
-      const spread = species === "canopy" ? 1.6 : species === "willow" ? 1.1 : 0.72;
-      const width = species === "canopy" ? 2.3 : species === "willow" ? 1.65 : 1.2;
-      const crownHeight = species === "willow" ? 2.15 : species === "canopy" ? 1.6 : 1.25;
-      crown(0, height + 0.4, 0, width * 1.1, crownHeight, width * 1.1);
-      for (let limb = 0; limb < 3; limb += 1) {
-        const angle = yaw + limb * TAU / 3;
-        const dx = Math.cos(angle) * spread, dz = Math.sin(angle) * spread;
-        branch(0, (height - 1) * size, 0, dx * size, size, dz * size, 0.12 * size);
-        crown(dx, height - (species === "willow" ? 0.5 : 0), dz, width, crownHeight, width);
-      }
-    }
-  };
-  for (let i = 0; i < environmentTreeCount; i += 1) {
-    const side = i % 2 === 0 ? 1 : -1;
-    const point = course.pointAt(i / environmentTreeCount + 0.004, side * (jungle || river ? 18 + (i % 3) * 3.8 : 18.2));
-    makeTree(point.x, point.y, point.z, river ? 1.28 + (i % 5) * 0.16 : jungle ? 1.05 + (i % 5) * 0.13 : 0.76 + (i % 4) * 0.07, i);
-  }
-  if (environmentTreeCount > 0) {
-    trunkInstances.count = trunkCount;
-    trunkInstances.instanceMatrix.needsUpdate = true;
-    trunkInstances.castShadow = true;
-    scene.add(trunkInstances);
-    [leafInstances, coneInstances].forEach((mesh, materialIndex) => {
-      mesh.count = materialIndex === 0 ? leafCount : coneCount;
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      mesh.castShadow = false;
-      if (mesh.count > 0) scene.add(mesh);
-      else mesh.geometry.dispose();
-    });
-  } else {
-    trunkGeometry.dispose();
-    leafGeometry.dispose();
-    coneInstances.geometry.dispose();
-    trunkMat.dispose();
-    leafMat.dispose();
-  }
-
-  if (jungle || river) {
-    const rockMats = [0x59624b, 0x69745a, 0x4e5945].map((color) => new THREE.MeshStandardMaterial({ color, roughness: 0.98 }));
-    const fernMat = new THREE.MeshStandardMaterial({ color: 0x2c7e3c, roughness: 0.9, side: THREE.DoubleSide });
-    rockMats.forEach((material) => markGeneratedSurface(material, "stone"));
-    markGeneratedSurface(fernMat, "leaf", "uv");
-    for (let i = 0; i < 54; i += 1) {
-      const side = i % 2 === 0 ? 1 : -1;
-      const point = course.pointAt(i / 54 + 0.006, side * (24 + (i % 4) * 2.8));
-      if (!course.isClearFromRoad(point.x, point.z, COURSE_WIDTH + 3.6)) continue;
-      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(1.6 + (i % 4) * 0.42, 1), rockMats[i % rockMats.length]);
-      rock.scale.set(1.25, 0.85 + (i % 3) * 0.2, 1);
-      rock.position.set(point.x, WORLD_GROUND_Y + 0.55, point.z);
-      rock.rotation.set(i * 0.31, i * 0.63, i * 0.17);
-      rock.castShadow = false;
-      scene.add(rock);
-      for (let leafIndex = 0; leafIndex < 4; leafIndex += 1) {
-        const leaf = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 1.25, 5, 12), fernMat);
-        leaf.position.set(point.x, WORLD_GROUND_Y + 0.4, point.z);
-        leaf.rotation.set(Math.PI / 2.8, leafIndex * Math.PI / 2 + i, 0);
-        leaf.castShadow = false;
-        scene.add(leaf);
-      }
-    }
-  }
+  // Decorative architecture and vegetation are batched by createCourseBackdrop.
+  // They deliberately do not contribute collision or race-course surfaces.
 
   const poleMat = new THREE.MeshStandardMaterial({ color: 0x3d4549, metalness: 0.72, roughness: 0.35 });
   markGeneratedSurface(poleMat, "metal");
@@ -3275,7 +3018,7 @@ function addWorld(THREE: ThreeModule, scene: Three.Scene, course: RaceCourse, de
 
   const supportMat = new THREE.MeshStandardMaterial({ color: 0x8c9293, roughness: 0.7, metalness: 0.24 });
   markGeneratedSurface(supportMat, "stone");
-  for (let i = 0; i < (cloud || pirate ? 0 : 80); i += 1) {
+  for (let i = 0; i < (cloudScenery || starlightScenery || pirate ? 0 : 80); i += 1) {
     const u = i / 80;
     const point = course.pointAt(u);
     if (point.y < 2.2) continue;
@@ -3306,17 +3049,9 @@ function addWorld(THREE: ThreeModule, scene: Three.Scene, course: RaceCourse, de
     starlightStarField = new THREE.Points(starGeometry, starlightStarMaterial);
     starlightStarField.visible = false;
     scene.add(starlightStarField);
-    starlightMoonMaterial = new THREE.MeshStandardMaterial({
-      color: 0xbfd8ff,
-      emissive: 0x5577bb,
-      emissiveIntensity: 0,
-      roughness: 0.78,
-      transparent: true,
-      opacity: 0,
-    });
-    markGeneratedSurface(starlightMoonMaterial, "stone", "uv", [3, 2]);
+    starlightMoonMaterial = createHeroMoonMaterial(THREE);
     starlightMoon = new THREE.Mesh(
-      new THREE.SphereGeometry(25, 32, 20),
+      createHeroMoonGeometry(THREE),
       starlightMoonMaterial,
     );
     starlightMoon.position.set(0, 138, 0);
@@ -5347,64 +5082,7 @@ function RaceWorld({
           scene.add(ghost);
           return { record, ghost, cursor: 0 };
         }) : [];
-      const turboFlames = new THREE.Group();
-      const turboOuterMaterial = new THREE.MeshBasicMaterial({
-        color: 0x249dff,
-        transparent: true,
-        opacity: 0.72,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      });
-      const turboInnerMaterial = new THREE.MeshBasicMaterial({
-        color: 0xc9f7ff,
-        transparent: true,
-        opacity: 0.94,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      });
-      const turboFlameTime = { value: 0 };
-      [turboOuterMaterial, turboInnerMaterial].forEach((material) => {
-        material.onBeforeCompile = (shader) => {
-          shader.uniforms.turboFlameTime = turboFlameTime;
-          shader.vertexShader = "varying vec2 vTurboUv; varying vec3 vTurboNormal; varying vec3 vTurboView;\n" + shader.vertexShader;
-          shader.vertexShader = shader.vertexShader.replace("#include <begin_vertex>", `#include <begin_vertex>
-            vTurboUv = uv; vTurboNormal = normalize(normalMatrix * normal);
-            float jetFlutter = pow(vTurboUv.y, 1.5) * 0.075;
-            transformed.x += sin(vTurboUv.y * 18.0 - turboFlameTime * 29.0) * jetFlutter;
-            transformed.z += cos(vTurboUv.y * 15.0 - turboFlameTime * 23.0) * jetFlutter;
-          `).replace("#include <project_vertex>", `#include <project_vertex>
-            vTurboView = -mvPosition.xyz;
-          `);
-          shader.vertexShader = "uniform float turboFlameTime;\n" + shader.vertexShader;
-          shader.fragmentShader = "uniform float turboFlameTime; varying vec2 vTurboUv; varying vec3 vTurboNormal; varying vec3 vTurboView;\n" + shader.fragmentShader;
-          shader.fragmentShader = shader.fragmentShader.replace("#include <color_fragment>", `#include <color_fragment>
-            float jetTipFade = 1.0 - smoothstep(0.58, 1.0, vTurboUv.y);
-            float jetSoftRim = 0.5 + 0.5 * pow(abs(dot(normalize(vTurboNormal), normalize(vTurboView))), 0.7);
-            float jetFlicker = 0.88 + 0.12 * sin(vTurboUv.y * 27.0 - turboFlameTime * 33.0 + vTurboUv.x * 13.0);
-            diffuseColor.a *= jetTipFade * jetSoftRim * jetFlicker;
-          `);
-        };
-        material.customProgramCacheKey = () => "drift-exhaust-flame-v2";
-      });
-      const turboNozzles = [-0.68, 0.68].map((x) => {
-        const nozzle = new THREE.Group();
-        // Match bodyRoot's twin exhaust outlets, including its +0.1 ride offset.
-        nozzle.position.set(x, 0.62, -2.225);
-        const flame = new THREE.Mesh(new THREE.ConeGeometry(0.33, 2.3, 10, 6, true), turboOuterMaterial);
-        flame.position.z = -1.15;
-        flame.rotation.x = -Math.PI / 2;
-        flame.castShadow = false;
-        nozzle.add(flame);
-        const core = new THREE.Mesh(new THREE.ConeGeometry(0.16, 1.45, 8, 4, true), turboInnerMaterial);
-        core.position.z = -0.725;
-        core.rotation.x = -Math.PI / 2;
-        core.castShadow = false;
-        nozzle.add(core);
-        turboFlames.add(nozzle);
-        return nozzle;
-      });
-      turboFlames.visible = false;
-      playerVisualRoot.add(turboFlames);
+      const turboExhaust = createTurboExhaustVisual(THREE, playerVisualRoot);
 
       const rivalStates = rivalCharacters.map((character, index) => ({
         name: character.name,
@@ -5788,6 +5466,8 @@ function RaceWorld({
       const rollingBarrels: RollingBarrelState[] = [];
       const pirateTentacles: PirateTentacleState[] = [];
       let pirateOctopus: Three.Group | null = null;
+      let pirateBreachVisual: ReturnType<typeof createPirateBreachVisual> | null = null;
+      let pirateBreachStartedAt = -1; // One entrance per race; attacks unlock after it settles.
       const tentacleSegmentAxis = new THREE.Vector3(0, 1, 0);
       const tentacleSuckerAxis = new THREE.Vector3(0, 0, 1);
       const tentaclePointA = new THREE.Vector3();
@@ -6028,6 +5708,7 @@ function RaceWorld({
         markGeneratedSurface(octopusSucker, "skin", "uv", [1, 1]);
         const octopusEye = new THREE.MeshBasicMaterial({ color: 0xfff3b5 });
         pirateOctopus = new THREE.Group();
+        pirateOctopus.name = "pirate-octopus";
         const octopusBody = new THREE.Mesh(new THREE.SphereGeometry(10.1, 28, 20), octopusSkin);
         octopusBody.scale.set(1.05, 1.25, 0.96);
         octopusBody.position.y = 9.2;
@@ -6076,7 +5757,13 @@ function RaceWorld({
           courseCenter.add(new THREE.Vector3(centerPoint.x, centerPoint.y, centerPoint.z));
         }
         courseCenter.multiplyScalar(1 / 64);
-        pirateOctopus.position.set(octopusPose.x, octopusPose.y - 3.3, octopusPose.z);
+        // One creature: distant in lap one, just its crown in lap two, then a
+        // sudden ship-side breach. The existing attack remains lap-three-only.
+        const foreshadowArms = createOctopusForeshadowArms(THREE, octopusSkin, octopusSucker);
+        pirateOctopus.add(foreshadowArms);
+        pirateOctopus.userData.foreshadowArms = foreshadowArms;
+        pirateOctopus.userData.approach = 0;
+        pirateOctopus.position.set(octopusPose.x + octopusPose.nx * 185, WORLD_GROUND_Y - 3.2, octopusPose.z + octopusPose.nz * 185);
         pirateOctopus.userData.baseX = octopusPose.x;
         pirateOctopus.userData.baseY = octopusPose.y - 3.3;
         pirateOctopus.userData.baseZ = octopusPose.z;
@@ -6084,26 +5771,14 @@ function RaceWorld({
         pirateOctopus.userData.nz = octopusPose.nz;
         pirateOctopus.rotation.y = Math.atan2(courseCenter.x - octopusPose.x, courseCenter.z - octopusPose.z) + Math.PI;
         pirateOctopus.userData.baseYaw = pirateOctopus.rotation.y;
-        pirateOctopus.visible = false;
+        pirateOctopus.visible = true;
         scene.add(pirateOctopus);
 
         const breachPoint = course.pointAt(0.905, 11.7);
-        const breach = new THREE.Group();
+        pirateBreachVisual = createPirateBreachVisual(THREE, wood);
+        const breach = pirateBreachVisual.group;
         breach.position.set(breachPoint.x, breachPoint.y + 0.4, breachPoint.z);
         breach.rotation.y = breachPoint.heading;
-        for (let plankIndex = 0; plankIndex < 11; plankIndex += 1) {
-          const plank = new THREE.Mesh(new THREE.BoxGeometry(0.7 + (plankIndex % 3) * 0.22, 0.34, 3.3 + (plankIndex % 4) * 0.52), wood);
-          plank.position.set(0.55 + (plankIndex % 4) * 0.9, 0.35 + (plankIndex % 3) * 0.42, -4.8 + plankIndex * 0.93);
-          plank.rotation.set((plankIndex % 2 ? 1 : -1) * 0.24, (plankIndex % 3 - 1) * 0.25, (plankIndex % 2 ? 1 : -1) * (0.35 + (plankIndex % 3) * 0.12));
-          plank.castShadow = true;
-          breach.add(plank);
-        }
-        [-4.9, 4.9].forEach((z, breachIndex) => {
-          const brokenPost = new THREE.Mesh(new THREE.BoxGeometry(0.38, 3.2, 0.38), wood);
-          brokenPost.position.set(0.3, 1.25, z);
-          brokenPost.rotation.z = breachIndex ? -0.72 : 0.72;
-          breach.add(brokenPost);
-        });
         breach.visible = false;
         pirateOctopus.userData.breach = breach;
         scene.add(breach);
@@ -6555,6 +6230,7 @@ function RaceWorld({
       let lastMiniMapDraw = 0;
       let wasDriftDashing = false;
       let driftTurboFadeStartedAt = -10000;
+      let driftTurboVisualStartedAt = -Infinity;
       const DRIFT_TURBO_FADE_MS = 460;
       const runStats: RaceRunStats = { crashCount: 0, driftTurbos: 0, shieldBlocks: 0, clearedGuardrail: false, wasLast: false };
       const recordedGhostSamples: GhostSample[] = [];
@@ -8621,6 +8297,7 @@ function RaceWorld({
           starlightCycle.curbMaterials.forEach((material) => {
             material.emissiveIntensity = 0.82 * sunsetToNight;
           });
+          scene.userData.courseBackdrop?.userData.setNightStrength?.(sunsetToNight);
           starlightCycle.starField.visible = sunsetToNight > 0.002;
           starlightCycle.starMaterial.opacity = 0.92 * sunsetToNight;
           starlightCycle.moon.visible = sunsetToNight > 0.002;
@@ -9254,6 +8931,7 @@ function RaceWorld({
           const driftTurboJustEnded = !driftDashing && wasDriftDashing;
           if (driftTurboJustStarted) {
             driftTurboFadeStartedAt = -10000;
+            driftTurboVisualStartedAt = now;
             audioController.play("driftTurbo");
             runStats.driftTurbos += 1;
             onRunEvent("drift-turbo");
@@ -9647,23 +9325,21 @@ function RaceWorld({
 
           const driftTurboFade = clamp(1 - (now - driftTurboFadeStartedAt) / DRIFT_TURBO_FADE_MS, 0, 1);
           const turboVisualActive = boosting || giantLowDashBoosting || driftDashing || playerState.vectorTurboActive || driftTurboFade > 0;
-          turboFlames.visible = turboVisualActive && !playerState.airborne && !playerCrashing;
-          if (turboFlames.visible) {
-            turboFlameTime.value = now * 0.001;
+          {
             const driftStrength = driftDashing || playerState.vectorTurboActive
               ? clamp(0.64 + playerState.driftBoost * 0.72, 0.64, 1.32)
               : driftTurboFade > 0
                 ? 0.22 + driftTurboFade * 0.48
                 : 1;
             const driftFlame = driftDashing || driftTurboFade > 0;
-            turboNozzles.forEach((nozzle, index) => {
-              const flamePulse = driftStrength * (0.94 + Math.sin(now * 0.037 + index * 1.8) * 0.1 + Math.random() * 0.08);
-              // Scale the jet around its outlet, so pulsing never detaches it.
-              const width = driftFlame ? 1.32 : 1;
-              nozzle.scale.set(width, width, flamePulse * (driftFlame ? 1.45 : 1));
+            turboExhaust.update({
+              active: turboVisualActive && !playerState.airborne && !playerCrashing,
+              timeSeconds: now * .001,
+              strength: driftStrength,
+              drift: driftFlame,
+              boosting: boosting || giantLowDashBoosting,
+              ignitionAge: (now - driftTurboVisualStartedAt) * .001,
             });
-            turboOuterMaterial.opacity = Math.min(1, (driftFlame ? 0.98 : boosting || giantLowDashBoosting ? 0.9 : 0.8) * Math.max(0.28, driftStrength));
-            turboInnerMaterial.opacity = Math.min(1, (driftFlame ? 0.98 : boosting || giantLowDashBoosting ? 0.98 : 0.9) * Math.max(0.34, driftStrength));
           }
 
           const position = actorRank(0);
@@ -10809,9 +10485,17 @@ function RaceWorld({
             });
 
             const octopusActive = pirateLapIndex >= 2;
+            // Wait for the player's cabin-exit landmark, never a CPU's approach.
+            // A >= threshold also catches fast frames and shortcuts past the marker.
+            if (octopusActive && pirateBreachStartedAt < 0
+              && wrap01(playerState.progress) >= PIRATE_BREACH_TRIGGER_PROGRESS) {
+              pirateBreachStartedAt = now;
+            }
+            const breachAge = octopusActive && pirateBreachStartedAt >= 0 ? now - pirateBreachStartedAt : -1;
+            const octopusAttacksEnabled = octopusActive && breachAge >= PIRATE_BREACH_SETTLED_MS;
             const tentacleMotion = new Map<PirateTentacleState, { slam: number; anticipation: number }>();
             pirateTentacles.forEach((tentacle) => {
-              if (!octopusActive) {
+              if (!octopusAttacksEnabled) {
                 tentacle.attackStartedAt = 0;
                 tentacle.cooldownUntil = 0;
                 tentacleMotion.set(tentacle, { slam: 0, anticipation: 0 });
@@ -10855,31 +10539,60 @@ function RaceWorld({
             const bodySlam = primaryMotion?.slam ?? 0;
             const bodySlamEase = bodySlam * bodySlam * (3 - 2 * bodySlam);
             const bodyAnticipation = primaryMotion?.anticipation ?? 0;
+            const breachPose = getPirateBreachPose(breachAge);
+            pirateBreachVisual?.update(breachAge);
             if (pirateOctopus) {
-              pirateOctopus.visible = octopusActive;
-              const breach = pirateOctopus.userData.breach as Three.Group | undefined;
-              if (breach) breach.visible = octopusActive;
+              pirateOctopus.visible = !octopusActive || breachPose.revealed;
+              const foreshadowArms = pirateOctopus.userData.foreshadowArms as Three.Group | undefined;
+              if (foreshadowArms) foreshadowArms.visible = pirateLapIndex === 0;
               if (octopusActive) {
                 const sway = Math.sin(now * 0.0015);
                 const reach = bodyAnticipation * 0.72 + bodySlamEase * 2.2;
                 pirateOctopus.position.x = (pirateOctopus.userData.baseX as number) - (pirateOctopus.userData.nx as number) * reach;
-                pirateOctopus.position.y = (pirateOctopus.userData.baseY as number) + Math.sin(now * 0.0024) * 0.68 + bodyAnticipation * 0.92 - bodySlamEase * 0.62;
+                pirateOctopus.position.y = (pirateOctopus.userData.baseY as number) + Math.sin(now * 0.0024) * 0.68 + bodyAnticipation * 0.92 - bodySlamEase * 0.62 + breachPose.riseOffset;
                 pirateOctopus.position.z = (pirateOctopus.userData.baseZ as number) - (pirateOctopus.userData.nz as number) * reach;
                 pirateOctopus.rotation.x = -bodyAnticipation * 0.07 + bodySlamEase * 0.13;
                 pirateOctopus.rotation.y = (pirateOctopus.userData.baseYaw as number) + sway * 0.025;
                 pirateOctopus.rotation.z = sway * 0.045 * (1 - bodySlamEase * 0.55);
                 pirateOctopus.scale.set(1 + bodySlamEase * 0.045, 1 - bodySlamEase * 0.055, 1 + bodySlamEase * 0.075);
+              } else {
+                const approach = Math.max(pirateOctopus.userData.approach as number,
+                  pirateOctopusApproach(pirateLapIndex, wrap01(playerState.progress)));
+                pirateOctopus.userData.approach = approach;
+                const distance = pirateLapIndex === 1
+                  ? 72 - 16 * clamp((approach - 0.5) * 2, 0, 1)
+                  : 185 * (1 - approach);
+                pirateOctopus.position.x = (pirateOctopus.userData.baseX as number) + (pirateOctopus.userData.nx as number) * distance;
+                // Keep the crown outside the opaque hull and a little toward
+                // the bow, where it can be glimpsed on exiting the cabin.
+                pirateOctopus.position.z = (pirateOctopus.userData.baseZ as number) + (pirateOctopus.userData.nz as number) * distance + (pirateLapIndex === 1 ? 40 : 0);
+                pirateOctopus.position.y = pirateLapIndex === 1
+                  ? pirateOctopusPeekY(15.65, now)
+                  : WORLD_GROUND_Y - 3.2 + Math.sin(now * 0.0017) * 0.48;
+                pirateOctopus.rotation.set(pirateLapIndex === 1 ? 0 : Math.sin(now * 0.0011) * 0.018,
+                  pirateOctopus.userData.baseYaw as number, pirateLapIndex === 1 ? 0 : Math.sin(now * 0.0013) * 0.035);
+                pirateOctopus.scale.setScalar(1);
+                if (foreshadowArms) foreshadowArms.rotation.y = Math.sin(now * 0.001) * 0.045;
               }
             }
             pirateTentacles.forEach((tentacle, index) => {
               tentacle.group.visible = octopusActive;
               if (!octopusActive) return;
+              // Do not change the parent visibility used by CPU danger checks,
+              // or any tip position used by hit tests: hide render meshes only.
+              tentacle.segments.visible = breachPose.revealed;
+              tentacle.suckers.visible = breachPose.revealed;
+              tentacle.tip.visible = breachPose.revealed;
+              // The entire arm rises with the body instead of its tip popping
+              // into the sky. Collision below intentionally reads the original
+              // local tip.position, never this presentation-only group offset.
+              tentacle.group.position.y = breachPose.riseOffset;
               const slamAmount = tentacleMotion.get(tentacle)?.slam ?? 0;
               tentacle.slamAmount = slamAmount;
               const easedSlam = slamAmount * slamAmount * (3 - 2 * slamAmount);
               const pose = course.pointAt(tentacle.progress, tentacle.lane);
               const bodyX = pirateOctopus?.position.x ?? (pirateOctopus?.userData.baseX as number);
-              const bodyY = pirateOctopus?.position.y ?? (pirateOctopus?.userData.baseY as number);
+              const bodyY = (pirateOctopus?.position.y ?? (pirateOctopus?.userData.baseY as number)) - breachPose.riseOffset;
               const bodyZ = pirateOctopus?.position.z ?? (pirateOctopus?.userData.baseZ as number);
               const bodyNx = (pirateOctopus?.userData.nx as number) ?? pose.nx;
               const bodyNz = (pirateOctopus?.userData.nz as number) ?? pose.nz;
@@ -11597,12 +11310,6 @@ function RaceWorld({
           const steeringRoll = playerSteer * (playerState.drifting ? 0.13 : 0.055);
           playerVisualRoot.rotation.z = steeringRoll + bounceRoll;
         }
-        // Pose is now current, including the road pitch and steering roll.
-        if (pendingTurboBurst) {
-          driftVisualEffects.burst(playerVisualRoot, Math.max(0, playerState.speed));
-          pendingTurboBurst = false;
-        }
-
         for (let index = skillVisuals.length - 1; index >= 0; index -= 1) {
           const effect = skillVisuals[index];
           const age = (now - effect.startedAt) / effect.durationMs;
@@ -11761,6 +11468,12 @@ function RaceWorld({
           else if (sampleDriftContacts) driftVisualEffects.drift(actorId, sampleVisualTireContacts(actorId), pose.heading, speed, true, visualContactDt);
         });
         driftVisualEffects.update(dt, skidSurfaceVisible);
+        // Start at age zero after advancing older effects, matching the exhaust
+        // ignition clock. The current road pitch and steering roll are applied.
+        if (pendingTurboBurst) {
+          driftVisualEffects.burst(playerVisualRoot, Math.max(0, playerState.speed));
+          pendingTurboBurst = false;
+        }
         visualEffects.update(dt, now * 0.001);
         if (courseDefinition.id === "river" || courseDefinition.id === "pirate") {
           actorIds.forEach((actorId) => {
@@ -11867,8 +11580,13 @@ function RaceWorld({
             warmupPose.z + warmupForwardZ * cameraView.lookAhead,
           );
           visualEffects.updateSky(camera, renderer.domElement.height, 0, visualStormStrength);
+          // Upload the new wood instances behind the existing loading overlay,
+          // not during the sudden entrance in the third lap. No attack clock is
+          // started here; hide the preview pose immediately after rendering.
+          pirateBreachVisual?.update(300);
           presentation.render(dt, player.position, false, false, cameraView.fov, true);
           courseRenderWarmupIndex += 1;
+          pirateBreachVisual?.update(-1);
           if (courseRenderWarmupIndex >= PIRATE_RENDER_WARMUP_PROGRESS.length) {
             camera.position.set(0, 0, 0);
           }
@@ -12090,7 +11808,8 @@ function RaceWorld({
       // All world, kart, ghost and hazard materials now exist. One traversal,
       // never a per-frame material rebuild; load behind the course loading UI.
       generatedTextures.attach(scene);
-      void generatedTextures.ready().then(() => { if (!disposed) generatedTexturesReady = true; });
+      void Promise.all([generatedTextures.ready(), scene.userData.courseBackdrop?.userData.backdropReady])
+        .then(() => { if (!disposed) generatedTexturesReady = true; });
       frame = requestAnimationFrame(animate);
 
       disposeThree = () => {

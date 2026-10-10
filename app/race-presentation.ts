@@ -72,24 +72,8 @@ export function createRacePresentation(
     material.customProgramCacheKey = () => "city-facade-v1";
   });
 
-  // A soft sky gradient, tinted from the existing day/night/weather system.
-  const sky = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 12), new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false,
-    uniforms: { skyTint: { value: new THREE.Color(0x8bcde8) }, night: { value: 0 } },
-    vertexShader: "varying vec3 vDirection; void main(){ vDirection=position; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }",
-    fragmentShader: `uniform vec3 skyTint; uniform float night; varying vec3 vDirection;
-      void main(){ float h=normalize(vDirection).y; float horizon=exp(-max(h,0.0)*5.0);
-        vec3 zenith=skyTint*mix(vec3(0.47,0.7,1.0),vec3(0.48,0.52,0.8),night);
-        vec3 haze=mix(skyTint*vec3(0.72,0.84,0.94),skyTint*0.7,night);
-        gl_FragColor=vec4(mix(zenith,haze,horizon),1.0);
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
-      }`,
-  }));
-  sky.frustumCulled = false;
-  sky.scale.setScalar(camera.far * 0.92);
-  sky.renderOrder = -100;
-  scene.add(sky);
+  // createRaceVisualEffects owns the only atmosphere mesh. A second opaque
+  // sky here would mask its layered clouds depending on the rendering order.
 
   const glowCanvas = document.createElement("canvas");
   glowCanvas.width = glowCanvas.height = 64;
@@ -166,12 +150,6 @@ export function createRacePresentation(
         sampleSeconds = 0; frameSum = 0; frameCount = 0;
       }
     }
-    if (scene.background instanceof THREE.Color) {
-      sky.material.uniforms.skyTint.value.copy(scene.background);
-      const color = scene.background;
-      sky.material.uniforms.night.value = 1 - THREE.MathUtils.smoothstep(Math.max(color.r, color.g, color.b), 0.035, 0.4);
-    }
-    sky.position.copy(camera.position);
     // The cycle updates sunOffset before rendering. Moving light and target
     // together centers the shadow map without rotating the light direction.
     sun.target.position.copy(focus);
@@ -219,8 +197,7 @@ export function createRacePresentation(
       scene.environment = null;
       environment.dispose(); textures.forEach((texture) => texture.dispose());
       composer?.passes.forEach((pass) => pass.dispose()); composer?.dispose();
-      scene.remove(sky, confetti);
-      sky.geometry.dispose(); sky.material.dispose();
+      scene.remove(confetti);
       confetti.geometry.dispose(); confetti.material.dispose();
     },
   };

@@ -7,7 +7,7 @@ import * as THREE from 'three';
 const energySource = await readFile(new URL('../app/turbo-energy-burst.ts', import.meta.url), 'utf8');
 const compile = source => ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText;
 const energyModule = 'data:text/javascript;base64,' + Buffer.from(compile(energySource)).toString('base64');
-const { createTurboEnergyBurst, TURBO_ENERGY_VARIANTS } = await import(energyModule);
+const { createTurboEnergyBurst, TURBO_ENERGY_VARIANTS, TURBO_RELEASE_DELAY_SECONDS, getTurboIgnitionEnvelope } = await import(energyModule);
 const source = (await readFile(new URL('../app/drift-visual-effects.ts', import.meta.url), 'utf8')).replace('"./turbo-energy-burst"', JSON.stringify(energyModule));
 const compiled = compile(source);
 const { createDriftVisualEffects } = await import('data:text/javascript;base64,' + Buffer.from(compiled).toString('base64'));
@@ -18,7 +18,20 @@ const setup = (mobile = false) => {
   return { scene, fx, root: new THREE.Group(), marks: scene.getObjectByName('temporary-tire-skid-marks'), sparks: scene.getObjectByName('anime-drift-and-turbo-shards'), energy: scene.getObjectByName('kart-turbo-energy-burst') };
 };
 
-test('turbo release has six polygon wave families and small spark accents in one pooled draw', () => {
+test('ignition envelope synchronizes compression and release without extending the half-second effect', () => {
+  assert.equal(TURBO_RELEASE_DELAY_SECONDS, .055);
+  for (const elapsed of [-1, .5, 1, NaN, Infinity]) assert.deepEqual(getTurboIgnitionEnvelope(elapsed), {compression:0,blast:0});
+  assert.deepEqual(getTurboIgnitionEnvelope(0), {compression:0,blast:0});
+  assert.ok(getTurboIgnitionEnvelope(.0275).compression > .99);
+  assert.equal(getTurboIgnitionEnvelope(.054).blast, 0);
+  assert.equal(getTurboIgnitionEnvelope(.055).compression, 0);
+  assert.equal(getTurboIgnitionEnvelope(.055).blast, 1);
+  assert.ok(getTurboIgnitionEnvelope(.11).blast > .8);
+  assert.ok(getTurboIgnitionEnvelope(.2).blast < .4);
+  assert.equal(getTurboIgnitionEnvelope(.3).blast, 0);
+});
+
+test('turbo release has six thick polygon families, brush tails and sparse warm accents in one pooled draw', () => {
   const { scene, fx, root, energy } = setup();
   assert.equal(scene.children.length, 3);
   assert.ok(scene.children.every(child => child.isMesh));
@@ -26,57 +39,65 @@ test('turbo release has six polygon wave families and small spark accents in one
   assert.equal(energy.material.depthWrite, false);
   assert.equal(energy.material.blending, THREE.NormalBlending);
   fx.burst(root, 32);
+  fx.update(.055);
   assert.equal(fx.stats().shards, 0);
   assert.equal(energy.geometry.attributes.energyAlpha.array.filter(x => x > .99).length, 48);
   assert.match(energy.material.fragmentShader, /vec2 q\[10\]/);
   assert.doesNotMatch(energy.material.fragmentShader, /atan\(|segmentDistance|ring|rays=/);
   const lengths = [], widths = [], positions = energy.geometry.attributes.position.array;
+  const start = 5; // The completed charge precedes the main release in the pool.
   for (let i = 0; i < 10; i++) {
-    lengths.push(energy.geometry.attributes.energySize.array[i * 8]);
-    widths.push(energy.geometry.attributes.energySize.array[i * 8 + 1]);
-    assert.ok(positions[i * 12 + 2] < -1.7);
-    if (i < 4) assert.ok(positions[i * 12] < -1);
-    else if (i < 6) assert.ok(Math.abs(positions[i * 12]) < .2);
-    else assert.ok(positions[i * 12] > 1);
+    const index = i + start;
+    lengths.push(energy.geometry.attributes.energySize.array[index * 8]);
+    widths.push(energy.geometry.attributes.energySize.array[index * 8 + 1]);
+    assert.ok(positions[index * 12 + 2] < -1.7);
+    if (i < 4) assert.ok(positions[index * 12] < -1);
+    else if (i < 6) assert.ok(Math.abs(positions[index * 12]) < .2);
+    else assert.ok(positions[index * 12] > 1);
   }
   assert.ok(new Set(lengths).size === 10 && new Set(widths).size === 10);
   assert.ok(Math.max(...widths) / Math.min(...widths) > 2.5);
   assert.ok(Math.max(...lengths) / Math.min(...lengths) > 2);
   const kinds = energy.geometry.attributes.energyKind.array;
-  assert.deepEqual([...new Set(Array.from({length:10}, (_,i) => kinds[i*4]))].sort(), [0,1,2,3,4,5]);
-  assert.deepEqual([kinds[40], kinds[44]], [6,7]);
-  for (const i of [10,11]) {
-    assert.ok(energy.geometry.attributes.energySize.array[i*8] < .34);
-    assert.ok(energy.geometry.attributes.energySize.array[i*8+1] < .19);
+  assert.deepEqual([...new Set(Array.from({length:10}, (_,i) => kinds[(i+start)*4]))].sort(), [0,1,2,3,4,5]);
+  assert.deepEqual([kinds[60], kinds[64]], [6,7]);
+  for (const i of [15,16]) {
+    assert.ok(energy.geometry.attributes.energySize.array[i*8] < .42);
+    assert.ok(energy.geometry.attributes.energySize.array[i*8+1] < .23);
   }
   assert.match(energy.material.fragmentShader, /if\(vKind>5\.5\)/); // Warm accent, not another blue wave.
+  assert.match(energy.material.fragmentShader, /tailProgress/);
+  assert.ok(energy.geometry.attributes.energyTrail.array.slice(start*4,(start+10)*4).every(value=>value>0));
 });
 
-test('wave speed remains twice v142 and maximum outward reach remains half', () => {
-  const newScene = new THREE.Scene(), newFx = createTurboEnergyBurst(THREE, newScene);
-  const root = new THREE.Group(); newFx.burst(root, 0);
-  const newMesh = newScene.getObjectByName('kart-turbo-energy-burst');
-  const initial = newMesh.geometry.attributes.position.array.slice();
-  // Reproduce the visual RNG draws for the original release's 12..20m/s speeds.
-  // This fixture is self-contained: tests do not require an old Git checkout.
-  let rng = 0x482fa3;
-  const random = () => { rng = (Math.imul(rng,1664525)+1013904223) >>> 0; return rng/4294967296; };
-  const oldSpeeds = [];
-  for (const side of [-1,0,1]) for (let i = 0; i < (side === 0 ? 2 : 4); i++) {
-    random(); if (side === 0) {random();random();} random();oldSpeeds.push(12+random()*8);
-    random();random();if(side !== 0)random();random();random();random();
-  }
+test('release follows a visible inward compression and throws chips rapidly across a short distance', () => {
+  const newScene = new THREE.Scene(), newFx = createTurboEnergyBurst(THREE,newScene),root = new THREE.Group();
+  newFx.burst(root,0);
+  const newMesh=newScene.getObjectByName('kart-turbo-energy-burst'),attrs=newMesh.geometry.attributes;
+  assert.equal(newFx.stats().emitted,5);
+  assert.ok(attrs.energyAlpha.array.every(x=>x===0));
+  const chargeX=attrs.position.array[0],chargeSize=attrs.energySize.array[0];
+  newFx.update(.0275);
+  assert.ok(attrs.energyAlpha.array[0]>.99);
+  assert.ok(attrs.position.array[0]>chargeX); // Left-side chip moves inward.
+  assert.ok(attrs.energySize.array[0]<chargeSize);
+  newFx.update(.0275);
+  assert.equal(newFx.stats().emitted,17);
+  assert.equal(attrs.energyAlpha.array[0],0);
+  const initial=attrs.position.array.slice();
   newFx.update(.015);
   const distance = piece => {
     const p = piece * 12, values = newMesh.geometry.attributes.position.array;
     return Math.hypot(values[p]-initial[p],values[p+1]-initial[p+1],values[p+2]-initial[p+2]);
   };
-  for (let piece = 0; piece < 10; piece++) assert.ok(Math.abs(distance(piece)/.015-oldSpeeds[piece]*2) < .0001);
-  newFx.update(.285);
-  for (let piece = 0; piece < 10; piece++) {
-    assert.ok(Math.abs(distance(piece)-oldSpeeds[piece]*.30*.5) < .000003);
+  for (let piece = 5; piece < 15; piece++) assert.ok(distance(piece)/.015>=23.99 && distance(piece)/.015<=36.01);
+  newFx.update(.06);
+  for (let piece = 5; piece < 15; piece++) {
+    assert.ok(distance(piece)>=1.79 && distance(piece)<=2.71);
   }
-  assert.ok(newMesh.geometry.attributes.energyAlpha.array.slice(0, 40).every(x => x < .000001));
+  const settled=attrs.position.array.slice(5*12,15*12);
+  newFx.update(.075);
+  assert.ok(attrs.position.array.slice(5*12,15*12).every((value,index)=>Math.abs(value-settled[index])<1e-6));
 });
 
 test('outward reach cap is frame-rate independent and afterimage fades without further radial travel', () => {
@@ -86,51 +107,57 @@ test('outward reach cap is frame-rate independent and afterimage fades without f
   for (let i = 0; i < 15; i++) effects[0].update(.01);
   effects[1].update(.15);
   const meshes = scenes.map(scene => scene.getObjectByName('kart-turbo-energy-burst'));
-  for (let p = 0; p < 120; p++) assert.ok(Math.abs(meshes[0].geometry.attributes.position.array[p] - meshes[1].geometry.attributes.position.array[p]) < 3e-6);
-  const before = meshes[1].geometry.attributes.position.array.slice(0, 120);
-  const alpha = meshes[1].geometry.attributes.energyAlpha.array[0];
+  for (let p = 60; p < 180; p++) assert.ok(Math.abs(meshes[0].geometry.attributes.position.array[p] - meshes[1].geometry.attributes.position.array[p]) < 3e-6);
+  const before = meshes[1].geometry.attributes.position.array.slice(60, 180);
+  const alpha = meshes[1].geometry.attributes.energyAlpha.array[20];
   effects[1].update(.05);
-  assert.deepEqual(meshes[1].geometry.attributes.position.array.slice(0, 120), before);
-  assert.ok(meshes[1].geometry.attributes.energyAlpha.array[0] < alpha);
-  assert.ok(alpha < .15);
+  assert.deepEqual(meshes[1].geometry.attributes.position.array.slice(60, 180), before);
+  assert.ok(meshes[1].geometry.attributes.energyAlpha.array[20] < alpha);
+  assert.ok(alpha > .3 && alpha < .7);
 });
 
 test('emitted energy moves outward independently of kart motion while new waves follow the source', () => {
   const { fx, root, energy } = setup();
   fx.burst(root, 32);
-  const initialX = energy.geometry.attributes.position.array[0];
-  const initialSize = energy.geometry.attributes.energySize.array[0];
+  fx.update(.055);
+  const initialX = energy.geometry.attributes.position.array[60];
+  const initialSize = energy.geometry.attributes.energySize.array[40];
   root.position.z += 32 * .075; fx.update(.075);
-  assert.ok(energy.geometry.attributes.energySize.array[0] > initialSize);
-  assert.ok(energy.geometry.attributes.position.array[0] < initialX);
-  assert.ok(energy.geometry.attributes.energyState.array[2] > 0);
-  const before = energy.geometry.attributes.position.array.slice(0, 3);
+  assert.ok(energy.geometry.attributes.energySize.array[40] > initialSize);
+  assert.ok(energy.geometry.attributes.position.array[60] < initialX);
+  assert.ok(energy.geometry.attributes.energyState.array[62] > 0);
+  const before = energy.geometry.attributes.position.array.slice(60, 63);
   root.position.set(100, 12, 55); fx.update(0);
   const after = energy.geometry.attributes.position.array;
-  assert.deepEqual(after.slice(0, 3), before); // Never reattach a flying fragment.
+  assert.deepEqual(after.slice(60, 63), before); // Never reattach a flying fragment.
   fx.update(.07);
-  assert.ok(energy.geometry.attributes.position.array[24 * 12] > 95); // Next 30ms wave uses the moved source.
-  assert.ok(energy.geometry.attributes.energyAlpha.array[0] < 1);
+  assert.ok(energy.geometry.attributes.position.array[29 * 12] > 95); // Next 30ms wave uses the moved source.
+  assert.ok(energy.geometry.attributes.energyAlpha.array[20] < 1);
   fx.update(.2);
-  assert.equal(energy.geometry.attributes.energyAlpha.array[0], 0); // Original wave expires at 300ms.
+  assert.equal(energy.geometry.attributes.energyAlpha.array[20], 0); // Original wave expires 300ms after release.
   assert.ok(energy.geometry.attributes.energyAlpha.array.some(x => x > 0));
 });
 
-test('30ms emission preserves 300ms wave life and all waves/sparks disappear within 500ms', () => {
+test('a stronger leading release is followed every 30ms by smaller waves, ending within 500ms', () => {
   const scene = new THREE.Scene(), root = new THREE.Group();
   const energyFx = createTurboEnergyBurst(THREE, scene);
   energyFx.burst(root, 32);
-  assert.equal(energyFx.stats().emitted, 12);
-  energyFx.update(.029); assert.equal(energyFx.stats().emitted, 12);
-  root.position.z = 32 * .031; energyFx.update(.002);
-  assert.equal(energyFx.stats().emitted, 18);
+  assert.equal(energyFx.stats().emitted, 5);
+  energyFx.update(.054); assert.equal(energyFx.stats().emitted, 5);
+  energyFx.update(.001); assert.equal(energyFx.stats().emitted, 17);
+  const sizes=scene.getObjectByName('kart-turbo-energy-burst').geometry.attributes.energySize.array;
+  const firstMean=Array.from({length:10},(_,i)=>sizes[(i+5)*8]).reduce((a,b)=>a+b)/10;
+  energyFx.update(.029); assert.equal(energyFx.stats().emitted,17);
+  energyFx.update(.001); assert.equal(energyFx.stats().emitted,23);
+  const nextMean=Array.from({length:5},(_,i)=>sizes[(i+17)*8]).reduce((a,b)=>a+b)/5;
+  assert.ok(firstMean>nextMean*2.2);
   const alpha = scene.getObjectByName('kart-turbo-energy-burst').geometry.attributes.energyAlpha.array;
-  energyFx.update(.268); assert.ok(alpha[0] > 0);
-  energyFx.update(.002); assert.equal(alpha[0], 0); // Initial wave expires at .300s.
-  assert.equal(energyFx.stats().emitted, 48); // Initial release + six waves, last at 180ms.
+  energyFx.update(.269); assert.ok(alpha[20] > 0);
+  energyFx.update(.002); assert.equal(alpha[20], 0); // Initial wave expires at .355s.
+  assert.equal(energyFx.stats().emitted, 53); // Charge, main release and six waves, last at 235ms.
   assert.ok(energyFx.stats().fragments > 0);
   const endedCount = energyFx.stats().emitted;
-  energyFx.update(.178); // At 479ms the final 180ms wave has not yet expired.
+  energyFx.update(.123); // At 479ms the final wave has not yet expired.
   assert.ok(energyFx.stats().fragments > 0);
   energyFx.update(.021); // Exactly 500ms from activation: no tails can remain.
   assert.equal(energyFx.stats().emitted, endedCount);
@@ -191,18 +218,19 @@ test('mobile also guarantees all six sizes/shapes and sparse, short-lived sparks
     const scene=new THREE.Scene(),root=new THREE.Group(),fx=createTurboEnergyBurst(THREE,scene,mobile);
     const geometry=scene.getObjectByName('kart-turbo-energy-burst').geometry;
     fx.burst(root,0);
-    const waveCount=mobile?7:10,sparkCount=mobile?1:2;
-    const initialKinds=Array.from({length:waveCount},(_,i)=>geometry.attributes.energyKind.array[i*4]);
+    fx.update(.055);
+    const chargeCount=mobile?3:5,waveCount=mobile?7:10,sparkCount=mobile?1:2;
+    const initialKinds=Array.from({length:waveCount},(_,i)=>geometry.attributes.energyKind.array[(i+chargeCount)*4]);
     assert.deepEqual([...new Set(initialKinds)].sort(),[0,1,2,3,4,5]);
-    assert.equal(fx.stats().emitted,waveCount+sparkCount);
+    assert.equal(fx.stats().emitted,chargeCount+waveCount+sparkCount);
     assert.ok(sparkCount/waveCount<=.2);
-    const lengths=Array.from({length:waveCount},(_,i)=>geometry.attributes.energySize.array[i*8]);
+    const lengths=Array.from({length:waveCount},(_,i)=>geometry.attributes.energySize.array[(i+chargeCount)*8]);
     assert.ok(Math.max(...lengths)/Math.min(...lengths)>2);
     fx.update(.181);
-    for(let i=waveCount;i<waveCount+sparkCount;i++)assert.equal(geometry.attributes.energyAlpha.array[i*4],0);
-    assert.ok(geometry.attributes.energyAlpha.array[0]>0); // Main wave still lasts 300ms.
+    for(let i=chargeCount+waveCount;i<chargeCount+waveCount+sparkCount;i++)assert.equal(geometry.attributes.energyAlpha.array[i*4],0);
+    assert.ok(geometry.attributes.energyAlpha.array[chargeCount*4]>0); // Main wave still lasts 300ms.
     const emitted=fx.stats().emitted;
-    assert.ok(emitted <= (mobile?32:48)); // Accents cannot overwhelm the main waves.
+    assert.ok(emitted <= (mobile?32:53)); // Accents cannot overwhelm the main waves.
     assert.equal(scene.children.length,1);
   }
 });
@@ -212,6 +240,7 @@ test('energy retrigger uses one emitter, keeps old fragments independent and ret
   const energyFx = createTurboEnergyBurst(THREE, scene, true);
   const mesh = scene.getObjectByName('kart-turbo-energy-burst');
   const positions = mesh.geometry.attributes.position.array;
+  const buffers = Object.fromEntries(Object.entries(mesh.geometry.attributes).map(([key,value])=>[key,value.array]));
   energyFx.burst(root, 32); energyFx.update(.09); energyFx.burst(root, 60);
   assert.equal(energyFx.activeCount(), 1);
   assert.ok(energyFx.stats().fragments > 7); // Old wave was not reset.
@@ -219,9 +248,28 @@ test('energy retrigger uses one emitter, keeps old fragments independent and ret
     root.position.z += 32 * .03; energyFx.burst(root, 32); energyFx.update(.03);
   }
   assert.strictEqual(mesh.geometry.attributes.position.array, positions);
+  for (const [key,array] of Object.entries(buffers)) assert.strictEqual(mesh.geometry.attributes[key].array,array);
   assert.equal(scene.children.length, 1);
   assert.equal(energyFx.stats().capacity, 320);
   assert.ok(energyFx.stats().fragments <= 320);
+});
+
+test('separate karts keep independent ignition windows and expire without affecting a later burst', () => {
+  const scene=new THREE.Scene(),fx=createTurboEnergyBurst(THREE,scene),a=new THREE.Group(),b=new THREE.Group();
+  b.position.set(20,0,30);
+  fx.burst(a,20);fx.update(.2);
+  fx.burst(b,40);
+  assert.equal(fx.activeCount(),2);
+  fx.update(.3);
+  assert.equal(fx.activeCount(),1);
+  assert.ok(fx.stats().fragments>0);
+  const geometry=scene.getObjectByName('kart-turbo-energy-burst').geometry;
+  for(let i=0;i<geometry.attributes.energyAlpha.array.length;i+=4) {
+    if(geometry.attributes.energyAlpha.array[i]>0) assert.ok(geometry.attributes.position.array[i*3]>14);
+  }
+  fx.update(.2);
+  assert.equal(fx.activeCount(),0);
+  assert.equal(fx.stats().fragments,0);
 });
 
 test('continuous energy waves remain independent of tire-contact spark pool recycling', () => {
@@ -320,7 +368,7 @@ test('effect emission does not consume gameplay random numbers or mutate the kar
   try {
     Math.random = () => { throw Error('Gameplay RNG consumed'); };
     fx.burst(root, 32);
-    fx.drift(0, [contact(-1.3, 0), contact(1.3, 0)], 0, 32, true, .05); fx.update(.05);
+    fx.drift(0, [contact(-1.3, 0), contact(1.3, 0)], 0, 32, true, .05); fx.update(.05); fx.update(.2);
   } finally { Math.random = original; }
   assert.ok(root.position.equals(position)); assert.ok(root.rotation.equals(rotation));
 });

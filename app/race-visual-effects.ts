@@ -37,31 +37,90 @@ float cloudNoise(vec2 p){return noise2(p)*.57+noise2(p*2.03)*.28+noise2(p*4.07)*
 export function createRaceVisualEffects(THREE: ThreeModule, scene: Three.Scene, mobile: boolean, theme = "city") {
   const time = { value: 0 };
   const viewportHeight = { value: 720 };
-  const canopySky = new THREE.Color(0x6399be), canopyHorizon = new THREE.Color(0x88acb5);
+  // The atmosphere is one fixed draw call. Theme changes its palette, cloud
+  // depth and coverage, not the lighting or any simulation/weather state.
+  const skyThemes = {
+    city: { zenith: 0x3d83b6, horizon: 0x9dbbc4, scale: 3.3, coverage: .56, lower: .72, upper: .22 },
+    jungle: { zenith: 0x346f8c, horizon: 0x8baeb0, scale: 4.1, coverage: .54, lower: .70, upper: .17 },
+    river: { zenith: 0x4384a5, horizon: 0x9abac4, scale: 3.1, coverage: .57, lower: .60, upper: .20 },
+    pirate: { zenith: 0x3f7198, horizon: 0xa4b8bf, scale: 2.5, coverage: .48, lower: .88, upper: .38 },
+    starlight: { zenith: 0x3f7da8, horizon: 0x9ebaca, scale: 3.0, coverage: .62, lower: .38, upper: .17 },
+    cloud: { zenith: 0x316ea8, horizon: 0x92b5c9, scale: 2.1, coverage: .51, lower: .88, upper: .48 },
+  };
+  const atmosphere = skyThemes[theme as keyof typeof skyThemes] ?? skyThemes.city;
+  const skyDay = new THREE.Color(atmosphere.zenith), skyHaze = new THREE.Color(atmosphere.horizon);
   let rng = 0x214cf; // Separate from CPU/item/weather randomness.
   const random = () => { rng = (Math.imul(rng, 1664525) + 1013904223) >>> 0; return rng / 4294967296; };
 
   const skyMaterial = new THREE.ShaderMaterial({
-    uniforms: { uTime: time, uSky: { value: new THREE.Color() }, uFog: { value: new THREE.Color() }, uNight: { value: 0 }, uStorm: { value: 0 } },
+    uniforms: {
+      uTime: time,
+      uSky: { value: scene.background instanceof THREE.Color ? scene.background.clone() : skyDay.clone() },
+      uFog: { value: scene.fog instanceof THREE.Fog ? scene.fog.color.clone() : skyHaze.clone() },
+      uZenith: { value: skyDay }, uHorizon: { value: skyHaze },
+      uCloudShape: { value: new THREE.Vector4(atmosphere.scale, atmosphere.coverage, atmosphere.lower, atmosphere.upper) },
+      uNight: { value: 0 }, uStorm: { value: 0 },
+    },
     side: THREE.BackSide, depthWrite: false, depthTest: true, fog: false,
     vertexShader: `varying vec3 vDirection;void main(){vDirection=position;vec4 clip=projectionMatrix*modelViewMatrix*vec4(position,1.0);gl_Position=clip.xyww;}`,
     fragmentShader: `${hashGLSL}
-      uniform float uTime,uNight,uStorm;uniform vec3 uSky,uFog;varying vec3 vDirection;
+      uniform float uTime,uNight,uStorm;uniform vec3 uSky,uFog,uZenith,uHorizon;
+      uniform vec4 uCloudShape;varying vec3 vDirection;
+      // Smooth lobes with lit rims and blue undersides give the clouds volume.
+      // Two 3-octave fields replace a ray march or a stack of alpha cards.
+      vec4 cloudLayer(vec2 p,float threshold,float height){
+        float field=cloudNoise(p);
+        float density=smoothstep(threshold,threshold+.17,field);
+        float volume=smoothstep(threshold+.015,threshold+.19,field);
+        float relief=clamp((dFdx(field)*.65-dFdy(field))/max(fwidth(field),.0004),-1.0,1.0);
+        float edge=(1.0-volume)*density;
+        vec3 underside=mix(uSky*.43,vec3(.105,.17,.23),.58);
+        vec3 lit=mix(uHorizon*1.08,vec3(.54,.58,.60),.38);
+        vec3 cloud=mix(underside,lit,clamp(.14+volume*.62+relief*.18+edge*.18+height*.08,0.0,1.0));
+        cloud*=1.0-uStorm*.59;
+        cloud=mix(cloud,uSky*.48+vec3(.0015,.002,.0035),uNight*.96);
+        return vec4(cloud,density);
+      }
+      float starSpecks(vec2 uv){
+        vec2 cells=uv*vec2(260.0,130.0),id=floor(cells);
+        float seed=hash21(id+vec2(27.7,11.4));
+        vec2 center=vec2(hash21(id+8.4),hash21(id+29.1))*.7+.15;
+        vec2 delta=fract(cells)-center;
+        float radius=mix(.023,.080,pow(seed,12.0));
+        float aa=max(length(fwidth(cells))*.42,.012);
+        float point=1.0-smoothstep(radius-aa,radius+aa,length(delta));
+        float glimmer=.82+.18*sin(uTime*.65+seed*83.0);
+        return point*step(.976,seed)*glimmer;
+      }
       void main(){
         vec3 d=normalize(vDirection);float h=max(0.0,d.y);
-        vec3 zenith=uSky*vec3(.38,.55,.78);
-        vec3 col=mix(uFog*.83,mix(uSky,zenith,.76),smoothstep(-.02,.72,d.y));
-        vec2 p=d.xz/max(.16,d.y+.13)*1.65+vec2(uTime*.004,0.0);
-        float n=cloudNoise(p);float underside=cloudNoise(p+vec2(.06,.11));
-        float cloud=smoothstep(.51-uStorm*.09,.71-uStorm*.08,n)*smoothstep(.015,.14,h)*(1.0-smoothstep(.70,.94,h));
-        vec3 shade=mix(uSky*.60,vec3(.46,.55,.61),clamp(.52+(n-underside)*3.2,0.0,1.0));
-        shade*=1.0-uStorm*.52;
-        shade=mix(shade,vec3(.012,.018,.033),uNight*.94);
-        col=mix(col,shade,cloud*(.66+uStorm*.16));
-        float cirrus=smoothstep(.62,.87,cloudNoise(vec2(p.x*.23,p.y*2.7)+3.0));
-        col=mix(col,uSky*.82+vec3(.018),cirrus*.14*smoothstep(.2,.55,h)*(1.0-uNight));
-        float milky=exp(-pow((d.x*.64+d.y*.37-d.z*.4-.22)*5.0,2.0));
-        col+=vec3(.013,.009,.026)*milky*noise2(p*.7)*uNight*smoothstep(.08,.3,h);
+        float warmth=clamp((uSky.r-uSky.b)*3.0,0.0,1.0)*(1.0-uNight);
+        vec3 zenith=mix(uSky*vec3(.50,.72,.94),uZenith,.64);
+        vec3 horizon=mix(uFog*.76,uHorizon,.60);
+        zenith=mix(zenith,uSky*vec3(.72,.68,.80),warmth*.8);
+        horizon=mix(horizon,uFog*.82,warmth*.85);
+        zenith=mix(zenith,uSky*vec3(.55,.66,.91),uStorm*.65);
+        horizon=mix(horizon,uFog*.72,uStorm*.78);
+        zenith=mix(zenith,uSky*.60+vec3(.001,.0015,.004),uNight);
+        horizon=mix(horizon,uFog*.65+vec3(.001,.001,.002),uNight);
+        vec3 col=mix(horizon,zenith,smoothstep(-.04,.76,d.y));
+        vec2 p=d.xz/max(.20,d.y+.22)*uCloudShape.x;
+        vec4 distant=cloudLayer(p*.47+vec2(12.4,-7.8)+vec2(-uTime*.002,0.0),uCloudShape.y-.07,.7);
+        vec4 nearby=cloudLayer(p+vec2(uTime*.004,0.0),uCloudShape.y-uStorm*.095,.1);
+        float farAlpha=distant.a*uCloudShape.w*smoothstep(-.01,.085,d.y)*(1.0-smoothstep(.62,.92,h));
+        float nearAlpha=nearby.a*uCloudShape.z*smoothstep(.015,.11,h)*(1.0-smoothstep(.74,.98,h));
+        // The distant sheet stays near the horizon; the larger foreground
+        // lobes overlap it with a shaded edge instead of a flat noise wash.
+        col=mix(col,distant.rgb,farAlpha*(1.0-uNight*.72));
+        col=mix(col,nearby.rgb,nearAlpha*(1.0-uNight*.63));
+        if(uNight>.001){
+          vec2 celestial=vec2(atan(d.z,d.x)*.159154943+.5,asin(clamp(d.y,-1.0,1.0))*.318309886+.5);
+          float visibility=uNight*(1.0-uStorm)*smoothstep(.035,.18,h)*(1.0-nearAlpha*.92)*(1.0-farAlpha*.7);
+          float milky=exp(-pow((d.x*.64+d.y*.37-d.z*.40-.22)*5.4,2.0));
+          float dust=noise2(celestial*vec2(55.0,32.0)+7.0);
+          col+=vec3(.012,.013,.026)*milky*(.28+dust*.72)*visibility;
+          col+=vec3(.35,.41,.49)*starSpecks(celestial)*visibility;
+        }
         gl_FragColor=vec4(col,1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -208,10 +267,11 @@ export function createRaceVisualEffects(THREE: ThreeModule, scene: Three.Scene, 
       sky.position.copy(camera.position); viewportHeight.value=height;
       if(scene.background instanceof THREE.Color) skyMaterial.uniforms.uSky.value.copy(scene.background);
       if(scene.fog instanceof THREE.Fog) skyMaterial.uniforms.uFog.value.copy(scene.fog.color);
-      // Canopy/river world fog is green; keep its object fog but give open sky an atmospheric blue.
+      // Canopy world fog is green; retain it for the objects, while the sky
+      // uses atmospheric blue/teal. Never accumulate a tint across frames.
       if (theme === "river" || theme === "jungle") {
-        skyMaterial.uniforms.uSky.value.lerp(canopySky, .88);
-        skyMaterial.uniforms.uFog.value.lerp(canopyHorizon, .72);
+        skyMaterial.uniforms.uSky.value.lerp(skyDay, .76);
+        skyMaterial.uniforms.uFog.value.lerp(skyHaze, .72);
       }
       skyMaterial.uniforms.uNight.value=clamp01(night);skyMaterial.uniforms.uStorm.value=clamp01(storm);
     },
